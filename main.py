@@ -6,6 +6,7 @@ from tkinter import ttk
 from tkinter import messagebox
 import styles
 import auth
+import threading
 from app import MainApp
 
 class LoginFrame(tk.Frame):
@@ -62,11 +63,36 @@ class LoginFrame(tk.Frame):
         username = self.username_entry.get()
         password = self.password_entry.get()
         
+        # UI Feedback
+        self.login_btn.config(text="Signing in...", state="disabled")
+        self.username_entry.config(state="disabled")
+        self.password_entry.config(state="disabled")
+        self.root = self.winfo_toplevel()
+        self.root.config(cursor="watch")
+        
+        # Start background thread
+        thread = threading.Thread(target=self._auth_thread, args=(username, password))
+        thread.daemon = True
+        thread.start()
+
+    def _auth_thread(self, username, password):
         success, permissions = auth.authenticate(username, password)
+        # Schedule update on main thread
+        self.after(0, lambda: self._on_auth_complete(success, permissions, username))
+
+    def _on_auth_complete(self, success, permissions, username):
+        # Reset UI state
+        self.login_btn.config(text="Sign In", state="normal")
+        self.username_entry.config(state="normal")
+        self.password_entry.config(state="normal")
+        self.root.config(cursor="")
+
         if success:
             self.on_login_success(username, permissions)
         else:
             messagebox.showerror("Login Failed", "Invalid credentials")
+            self.password_entry.delete(0, tk.END)
+            self.password_entry.focus()
 
     def reset(self):
         self.username_entry.delete(0, tk.END)

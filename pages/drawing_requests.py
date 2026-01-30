@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
 import datetime
+import threading
 
 # Assuming you have a styles module - if not, you can replace with plain values
 # For compatibility we're using more basic colors where possible
@@ -23,21 +24,46 @@ class DrawingRequestsPage(ttk.Frame):
         self.pack(expand=True, fill="both", padx=20, pady=20)
         
         self.username = username
-        self.drawings = self._generate_data()
+        self.drawings = []
         self.page_size = 10
         self.current_page = 0
-        self.filtered = list(self.drawings)
+        self.filtered = []
         
         # Column configuration: [Drawing ID, Revision, Status, Requested By, Action]
         self.col_widths = [150, 80, 100, 200, 120]
         self.row_widgets = []  # Cache for row widgets
         
         self._build_ui()
+        
+        # Start loading data after UI is built
+        self.after(100, self._start_loading)
+
+    def _start_loading(self):
+        self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
+        self.table_container.pack_forget() # Hide table while loading (optional, but cleaner)
+        
+        thread = threading.Thread(target=self._fetch_data_thread)
+        thread.daemon = True
+        thread.start()
+
+    def _fetch_data_thread(self):
+        data = self._generate_data()
+        self.after(0, lambda: self._on_data_ready(data))
+
+    def _on_data_ready(self, data):
+        self.drawings = data
+        self.filtered = list(self.drawings)
+        self.current_page = 0
+        
+        self.loading_label.place_forget()
+        self.table_container.pack(expand=True, fill="both")
+        self._load_table()
 
     def _generate_data(self):
         try:
             import sys
             import os
+            # Ensure we can import db_handler from parent
             sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
             from db_handler import db
             
@@ -87,6 +113,10 @@ class DrawingRequestsPage(ttk.Frame):
         self.search_entry.bind("<FocusIn>", self._clear_placeholder)
         self.search_entry.bind("<FocusOut>", self._restore_placeholder)
         self.search_var.trace("w", self._search_data)
+
+        # ── Loading Indicator ───────────────────────────────────
+        self.loading_label = ttk.Label(self, text="Loading data...", 
+                                      font=("Segoe UI", 12), foreground="#64748b")
 
         # ── Table Area ───────────────────────────────────────────
         self.table_container = tk.Frame(self, bg="white", 
@@ -140,7 +170,7 @@ class DrawingRequestsPage(ttk.Frame):
         self.records_label.place(relx=1.0, rely=0.5, anchor="e", x=-10)
 
         # Load initial data
-        self._load_table()
+        # self._load_table() # Called after data loads now
 
     def _sync_columns(self):
         for i, f in enumerate(self.header_frames):
@@ -269,10 +299,7 @@ class DrawingRequestsPage(ttk.Frame):
         messagebox.showinfo("Request", "Request submitted for {}".format(drawing_no))
 
     def refresh(self):
-        self.drawings = self._generate_data()
-        self.filtered = list(self.drawings)
-        self.current_page = 0
-        self._load_table()
+        self._start_loading()
 
     def _on_row_enter(self, row):
         highlight_bg = "#f1f5f9"
