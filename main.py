@@ -8,6 +8,74 @@ import styles
 import auth
 import threading
 from app import MainApp
+import math
+
+class LoaderFrame(tk.Frame):
+    def __init__(self, parent):
+        tk.Frame.__init__(self, parent)
+        self.configure(bg=styles.LIGHT)
+        self._build_ui()
+        self.animation_running = False
+        self.angle = 0
+        
+    def _build_ui(self):
+        # Center container
+        container = tk.Frame(self, bg=styles.LIGHT)
+        container.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Canvas for circular loader
+        self.canvas = tk.Canvas(container, width=80, height=80, bg=styles.LIGHT, highlightthickness=0)
+        self.canvas.pack(pady=(0, 20))
+        
+        # Loading text
+        tk.Label(
+            container,
+            text="Loading...",
+            font=("Segoe UI", 14),
+            fg=styles.PRIMARY,
+            bg=styles.LIGHT
+        ).pack()
+        
+    def start_animation(self):
+        """Start the circular loader animation."""
+        self.animation_running = True
+        self._animate()
+        
+    def stop_animation(self):
+        """Stop the circular loader animation."""
+        self.animation_running = False
+        
+    def _animate(self):
+        """Animate the circular loader."""
+        if not self.animation_running:
+            return
+            
+        self.canvas.delete("all")
+        
+        # Draw circular arc
+        center_x, center_y = 40, 40
+        radius = 30
+        
+        # Calculate arc parameters
+        start_angle = self.angle
+        extent = 280  # Arc length in degrees
+        
+        # Draw the arc
+        self.canvas.create_arc(
+            center_x - radius, center_y - radius,
+            center_x + radius, center_y + radius,
+            start=start_angle,
+            extent=extent,
+            outline=styles.PRIMARY,
+            width=4,
+            style="arc"
+        )
+        
+        # Update angle for next frame
+        self.angle = (self.angle + 10) % 360
+        
+        # Schedule next frame (60 FPS = ~16ms per frame)
+        self.after(16, self._animate)
 
 class LoginFrame(tk.Frame):
     def __init__(self, parent, on_login_success):
@@ -33,7 +101,7 @@ class LoginFrame(tk.Frame):
         # Header
         ttk.Label(
             self.card,
-            text="Welcome",
+            text="DMS",
             style="LoginTitle.TLabel"
         ).pack(pady=(0, 10))
         
@@ -107,17 +175,48 @@ class DrawingSystemApp:
         
         styles.apply_styles()
         
+        # Warm up database connection in background
+        from db_handler import db
+        db.warm_up()
+        
         self.login_frame = LoginFrame(self.root, self.show_main_app)
         self.login_frame.pack(expand=True, fill="both")
+        
+        # Create loader frame but don't pack it yet
+        self.loader_frame = LoaderFrame(self.root)
         
         self.main_app = None
 
     def show_main_app(self, username, permissions):
+        # Hide login frame and show loader
         self.login_frame.pack_forget()
+        self.loader_frame.pack(expand=True, fill="both")
+        self.loader_frame.start_animation()
+        
+        # Create main app in background thread
+        def create_app():
+            # Small delay to ensure loader is visible
+            import time
+            time.sleep(0.1)
+            
+            # Schedule app creation on main thread
+            self.root.after(0, lambda: self._finish_loading(username, permissions))
+        
+        thread = threading.Thread(target=create_app)
+        thread.daemon = True
+        thread.start()
+    
+    def _finish_loading(self, username, permissions):
+        """Complete the app loading process on the main thread."""
         if self.main_app:
             self.main_app.destroy()
         
+        # Create and show main app immediately
         self.main_app = MainApp(self.root, username, permissions, self.logout)
+        
+        # Hide loader and show main app
+        self.loader_frame.stop_animation()
+        self.loader_frame.pack_forget()
         self.main_app.pack(expand=True, fill="both")
 
     def logout(self):

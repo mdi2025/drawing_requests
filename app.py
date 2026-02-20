@@ -33,7 +33,7 @@ class MainApp(ttk.Frame):
         self.sidebar_visible = True
         self._build_ui()
         
-        # Show first available page based on permissions
+        # Show first available page based on permissions immediately
         self._show_first_available_page()
 
     def _get_allowed_pages(self):
@@ -138,11 +138,11 @@ class MainApp(ttk.Frame):
             elif page_key == "User Management":
                 self.pages[page_key] = UsersPage(self.content_frame)
         
-        # Show page
+        # Show page first so user sees the layout
         self.current_page = self.pages.get(page_key)
         if self.current_page:
-            # Refresh data if the page supports it
+            self.current_page.pack(fill="both", expand=True, padx=20, pady=20)
+            # Refresh data in background if the page supports it
             if hasattr(self.current_page, 'refresh'):
                 self.current_page.refresh()
-            self.current_page.pack(fill="both", expand=True)
 

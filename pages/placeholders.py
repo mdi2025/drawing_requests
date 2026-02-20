@@ -6,7 +6,6 @@ from tkinter import ttk
 class PlaceholderPage(ttk.Frame):
     def __init__(self, parent, title):
         ttk.Frame.__init__(self, parent, style="Card.TFrame", padding=25)
-        self.pack(expand=True, fill="both", padx=20, pady=20)
         
         ttk.Label(self, text=title, style="Title.TLabel").pack(pady=30)
 
