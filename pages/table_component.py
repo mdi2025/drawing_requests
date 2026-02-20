@@ -60,8 +60,6 @@ class CanvasDataTable(ttk.Frame):
         self.hover_row = -1
         self.hover_button = -1
         self.dragging_col = -1
-        self.sort_col = -1
-        self.sort_desc = False
         
         self._build_ui()
         self.update_idletasks()
@@ -206,39 +204,7 @@ class CanvasDataTable(ttk.Frame):
                 if match:
                     self.filtered.append(d)
         self.current_page = 0
-        self._apply_sort()
         self._redraw_table()
-
-    def _sort_data(self, col_idx):
-        if self.sort_col == col_idx:
-            self.sort_desc = not self.sort_desc
-        else:
-            self.sort_col = col_idx
-            self.sort_desc = False
-        
-        self._apply_sort()
-        self._redraw_table()
-
-    def _apply_sort(self):
-        if self.sort_col == -1 or not self.filtered:
-            return
-            
-        key = self.data_keys[self.sort_col] if hasattr(self, 'data_keys') and self.sort_col < len(self.data_keys) else None
-        if not key: return
-
-        def sort_key(item):
-            val = item.get(key, "")
-            if val is None: return ""
-            # Try to handle numbers
-            if isinstance(val, (int, float)): return val
-            try:
-                # Basic numeric detection for strings
-                if str(val).replace('.', '', 1).isdigit():
-                    return float(val)
-            except: pass
-            return str(val).lower()
-
-        self.filtered.sort(key=sort_key, reverse=self.sort_desc)
 
     def _search_data(self, *args):
         self._apply_search()
@@ -278,13 +244,6 @@ class CanvasDataTable(ttk.Frame):
                                    text=head, fill="#374151",
                                    font=("Segoe UI", 10, "bold"), anchor="center",
                                    tags=("header", "head%d" % i))
-
-            # Sort indicator
-            if self.sort_col == i and not is_action:
-                indicator = "▼" if self.sort_desc else "▲"
-                self.canvas.create_text(x + w - 15, header_height//2,
-                                       text=indicator, fill=styles.PRIMARY,
-                                       font=("Segoe UI", 8), anchor="center")
 
             if i < len(self.headers) - 1:
                 sep_x = x + w - 1
@@ -453,14 +412,9 @@ class CanvasDataTable(ttk.Frame):
                         self.canvas.config(cursor="sb_h_double_arrow")
                         return
             
-            # Header Click (Sorting)
+            # Header Area Click (No Sorting)
             if any(t == "header" for t in tags):
-                for tag in tags:
-                    if tag.startswith("head") and tag[4:].isdigit():
-                        col_idx = int(tag[4:])
-                        if col_idx < len(self.headers) - 1: # Don't sort Action column
-                            self._sort_data(col_idx)
-                            return
+                return
 
         for item in items:
             tags = self.canvas.gettags(item)
