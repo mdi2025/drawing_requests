@@ -82,6 +82,13 @@ class MainApp(ttk.Frame):
         self.menu_frame = tk.Frame(self, bg=styles.DARK, width=180)
         self.menu_frame.pack(side="left", fill="y")
 
+        # Sidebar Header
+        tk.Label(self.menu_frame, text="MAIN MENU", bg=styles.DARK, fg="#94a3b8",
+                 font=("Segoe UI", 8, "bold"), pady=15, padx=15, anchor="center").pack(fill="x", pady=(20, 0))
+        
+        # Separator line
+        tk.Frame(self.menu_frame, bg="#334155", height=1).pack(fill="x", padx=10, pady=(0, 10))
+
         # Only show menu items for pages the user has permission to access
         allowed_pages = self._get_allowed_pages()
         
@@ -111,7 +118,7 @@ class MainApp(ttk.Frame):
     def _menu_btn(self, txt, page_key):
         return tk.Button(self.menu_frame, text=txt,
             bg=styles.DARK, fg="white", relief="flat",
-            anchor="w", padx=15, pady=8,
+            anchor="center", padx=15, pady=8,
             command=lambda: self.show_page(page_key))
 
     def show_page(self, page_key):
