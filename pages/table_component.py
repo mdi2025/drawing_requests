@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import datetime
+import tkinter.font as tkfont
 
 try:
     import styles
@@ -103,15 +104,22 @@ class CanvasDataTable(ttk.Frame):
         self.loading_label = ttk.Label(self, text="Loading data...",
                                        font=("Segoe UI", 12), foreground=styles.SECONDARY)
 
-        # Table Container
         table_frame = tk.Frame(self, bg="white", relief="solid", bd=1)
         table_frame.pack(expand=True, fill="both", pady=(0, 8))
+        
+        # Use grid for table_frame to accommodate both scrollbars
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
 
         self.canvas = tk.Canvas(table_frame, bg="white", highlightthickness=0)
         self.vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.vsb.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.vsb.pack(side="right", fill="y")
+        self.hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.canvas.xview)
+        
+        self.canvas.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
+        
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vsb.grid(row=0, column=1, sticky="ns")
+        self.hsb.grid(row=1, column=0, sticky="ew")
 
         # Bindings
         self.canvas.bind("<Configure>", self._on_canvas_configure)
@@ -121,8 +129,9 @@ class CanvasDataTable(ttk.Frame):
         self.canvas.bind("<ButtonRelease-1>", self._on_resize_release)
         self.canvas.bind("<Leave>", self._on_canvas_leave)
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
-        self.canvas.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units")) # Linux
-        self.canvas.bind("<Button-5>", lambda e: self.canvas.yview_scroll(1, "units")) # Linux
+        self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        self.canvas.bind("<Button-4>", lambda e: self._handle_scroll(-1)) # Linux Scroll Up
+        self.canvas.bind("<Button-5>", lambda e: self._handle_scroll(1))  # Linux Scroll Down
 
         # Pager Area
         pager = tk.Frame(self, bg=styles.LIGHT, height=48)
@@ -165,13 +174,41 @@ class CanvasDataTable(ttk.Frame):
             self.search_entry.config(fg=styles.SECONDARY)
 
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self._handle_scroll(int(-1 * (event.delta / 120)))
+
+    def _on_shift_mousewheel(self, event):
+        self._handle_hscroll(int(-1 * (event.delta / 120)))
+
+    def _handle_scroll(self, amount):
+        sr = self.canvas.cget("scrollregion")
+        if not sr: return
+        try:
+            _, _, _, sr_h = [float(x) for x in sr.split()]
+            canvas_h = self.canvas.winfo_height()
+            if sr_h <= canvas_h + 1: # Plus 1 for rounding
+                return
+            self.canvas.yview_scroll(amount, "units")
+        except:
+            pass
+
+    def _handle_hscroll(self, amount):
+        sr = self.canvas.cget("scrollregion")
+        if not sr: return
+        try:
+            _, _, sr_w, _ = [float(x) for x in sr.split()]
+            canvas_w = self.canvas.winfo_width()
+            if sr_w <= canvas_w + 1:
+                return
+            self.canvas.xview_scroll(amount, "units")
+        except:
+            pass
 
     def refresh(self):
         if self.is_loading: return
         self.is_loading = True
         self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
         thread = threading.Thread(target=self._load_data_thread, daemon=True)
+        self.canvas.yview_moveto(0)
         thread.start()
 
     def _load_data_thread(self):
@@ -204,6 +241,7 @@ class CanvasDataTable(ttk.Frame):
                 if match:
                     self.filtered.append(d)
         self.current_page = 0
+        self.canvas.yview_moveto(0)
         self._redraw_table()
 
     def _search_data(self, *args):
@@ -251,10 +289,6 @@ class CanvasDataTable(ttk.Frame):
                 self.canvas.create_line(sep_x, 4, sep_x, header_height-4,
                                        fill="#9ca3af", width=4,
                                        tags=("separator", "sep%d" % i))
-                # Hitbox
-                self.canvas.create_rectangle(sep_x - 18, 0, sep_x + 18, header_height,
-                                            fill="", outline="",
-                                            tags=("separator", "sep%d" % i, "sep_hit"))
             x += w
 
         # Draw Rows
@@ -346,7 +380,10 @@ class CanvasDataTable(ttk.Frame):
             y += self.row_height
 
         total_height = header_height + len(page_data) * self.row_height
-        self.canvas.config(scrollregion=(0, 0, sum(self.col_widths), total_height))
+        # Ensure scrollregion is at least the size of the canvas to avoid jumping
+        canvas_h = self.canvas.winfo_height()
+        scroll_h = max(total_height, canvas_h)
+        self.canvas.config(scrollregion=(0, 0, sum(self.col_widths), scroll_h))
 
         total = len(self.filtered)
         total_pages = max(1, (total + self.page_size - 1) // self.page_size)
@@ -359,11 +396,18 @@ class CanvasDataTable(ttk.Frame):
     def _on_canvas_motion(self, event):
         cx = self.canvas.canvasx(event.x)
         cy = self.canvas.canvasy(event.y)
+        
+        # Check if we are over a column boundary for resizing
+        over_separator = False
+        if cy < 38: # Only headers
+            sep_idx = self._get_column_boundary(cx)
+            if sep_idx != -1:
+                over_separator = True
+
         items = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)
 
         new_row = -1
         new_btn = -1
-        over_separator = False
 
         for item in items:
             tags = self.canvas.gettags(item)
@@ -374,8 +418,6 @@ class CanvasDataTable(ttk.Frame):
                     parts = tag.split("-")
                     new_row = int(parts[2])
                     new_btn = int(parts[3])
-                if tag.startswith("sep"):
-                    over_separator = True
 
         redraw_needed = (new_row != self.hover_row or new_btn != self.hover_button)
         self.hover_row = new_row
@@ -391,6 +433,15 @@ class CanvasDataTable(ttk.Frame):
         else:
             self.canvas.config(cursor="")
 
+    def _get_column_boundary(self, cx):
+        x = 0
+        threshold = 12
+        for i in range(len(self.col_widths) - 1): # All except after the last one
+            x += self.col_widths[i]
+            if x - threshold <= cx <= x + threshold:
+                return i
+        return -1
+
     def _on_canvas_leave(self, event):
         if self.dragging_col == -1:
             self.hover_row = -1
@@ -402,15 +453,17 @@ class CanvasDataTable(ttk.Frame):
         cx = self.canvas.canvasx(event.x)
         cy = self.canvas.canvasy(event.y)
         items = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)
-
+        tags = []
         for item in items:
-            tags = self.canvas.gettags(item)
-            if any(t.startswith("sep") for t in tags):
-                for tag in tags:
-                    if tag.startswith("sep") and tag[3:].isdigit():
-                        self.dragging_col = int(tag[3:])
-                        self.canvas.config(cursor="sb_h_double_arrow")
-                        return
+            tags.extend(self.canvas.gettags(item))
+
+        # Header Area Interaction
+        if cy < 38:
+            boundary_col = self._get_column_boundary(cx)
+            if boundary_col != -1:
+                self.dragging_col = boundary_col
+                self.canvas.config(cursor="sb_h_double_arrow")
+                return
             
             # Header Area Click (No Sorting)
             if any(t == "header" for t in tags):
@@ -463,9 +516,22 @@ class CanvasDataTable(ttk.Frame):
         if self.dragging_col == -1: return
         cx = self.canvas.canvasx(event.x)
         prev = sum(self.col_widths[:self.dragging_col])
-        new_w = max(40, cx - prev)
+        
+        # Calculate minimum width based on header text
+        header_text = self.headers[self.dragging_col]
+        # Using a default font measurement as backup
+        try:
+            f = tkfont.Font(family="Segoe UI", size=10, weight="bold")
+            text_w = f.measure(header_text)
+        except:
+            text_w = len(header_text) * 9
+            
+        min_w = text_w + 40 # text width + padding for separators and icons
+        
+        new_w = max(min_w, cx - prev)
         self.col_widths[self.dragging_col] = new_w
         self._redraw_table()
+        self._stretch_last_column() # Ensure last column reacts to change
 
     def _on_resize_release(self, event):
         self.dragging_col = -1
@@ -483,9 +549,11 @@ class CanvasDataTable(ttk.Frame):
     def _prev_page(self):
         if self.current_page > 0:
             self.current_page -= 1
+            self.canvas.yview_moveto(0)
             self._redraw_table()
 
     def _next_page(self):
         if (self.current_page + 1) * self.page_size < len(self.filtered):
             self.current_page += 1
+            self.canvas.yview_moveto(0)
             self._redraw_table()
