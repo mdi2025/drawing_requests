@@ -8,11 +8,13 @@ import threading
 from pages.table_component import CanvasDataTable
 import styles
 
+
 class DrawingRequestsPage(ttk.Frame):
+
     def __init__(self, parent, username="User"):
         ttk.Frame.__init__(self, parent)
         self.username = username
-        
+
         # Initialize the reusable table component
         self.table = CanvasDataTable(
             self,
@@ -28,9 +30,14 @@ class DrawingRequestsPage(ttk.Frame):
                 3: self._format_requested_by
             }
         )
+
         self.table.data_keys = ["no", "rev", "status", "requested_by", "id"]
         self.table.pack(expand=True, fill="both")
         self.pack_propagate(False)
+
+    # ------------------------------
+    # Formatters
+    # ------------------------------
 
     def _format_status(self, val, record):
         return str(val).upper(), "#1f2937", ("Segoe UI", 10), "center"
@@ -39,55 +46,95 @@ class DrawingRequestsPage(ttk.Frame):
         fg = "#4f46e5" if val else "#1f2937"
         return val, fg, ("Segoe UI", 9, "italic"), "w"
 
+    # ------------------------------
+    # Fetch Data
+    # ------------------------------
+
     def _fetch_drawings(self):
         try:
             import sys, os
-            sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+            sys.path.append(
+                os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            )
+
             from db_handler import db
 
             query = """
-                SELECT id,
-                       drawing_no as no,
-                       latest_revision as rev,
-                       current_status as status
-                FROM drawings_master_bal
-                WHERE current_status = 'Approved'
+                SELECT 
+                    auto_id AS id,
+                    catalog AS no,
+                    revision AS rev,
+                    approved_status AS status
+                FROM master_data_new
+                WHERE approved_status = 'Approved'
                 LIMIT 200
             """
-            rows = db.fetch_all(query) or []
+
+            rows = db.fetch_all(query)
+
             for row in rows:
                 row['requested_by'] = ""
+
             return rows
+
         except Exception as e:
             print("Error fetching drawings: {}".format(e))
             return []
 
+    # ------------------------------
+    # Action Buttons
+    # ------------------------------
+
     def _get_actions(self, drawing):
         buttons = []
+
         if not drawing.get("requested_by"):
-            buttons.append(("Request", styles.PRIMARY, "white", self._request_drawing))
+            buttons.append(
+                ("Request", styles.PRIMARY, "white", self._request_drawing)
+            )
         else:
-            buttons.append(("Requested", "#e2e8f0", "#6b7280", None))
+            buttons.append(
+                ("Requested", "#e2e8f0", "#6b7280", None)
+            )
+
         return buttons
 
+    # ------------------------------
+    # Request Drawing
+    # ------------------------------
+
     def _request_drawing(self, drawing):
+
         drawing_id = drawing.get("id")
         drawing_no = drawing.get("no")
-        confirm = messagebox.askyesno("Confirm Request",
-                                      "Request drawing no %s?" % drawing_no)
-        if not confirm: return
-        
+
+        confirm = messagebox.askyesno(
+            "Confirm Request",
+            "Request drawing no %s?" % drawing_no
+        )
+
+        if not confirm:
+            return
+
         now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M")
         requested_text = "%s at %s" % (self.username, now)
-        
+
         # Update local data
         for d in self.table.data:
             if d.get("id") == drawing_id:
                 d["requested_by"] = requested_text
                 break
-        
+
         self.table._apply_search()
-        messagebox.showinfo("Success", "Request submitted for %s" % drawing_no)
+
+        messagebox.showinfo(
+            "Success",
+            "Request submitted for %s" % drawing_no
+        )
+
+    # ------------------------------
+    # Refresh Table
+    # ------------------------------
 
     def refresh(self):
         self.table.refresh()

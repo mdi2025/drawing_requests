@@ -38,7 +38,7 @@ class UsersPage(ttk.Frame):
         self.pack_propagate(False)
 
     def _format_permissions(self, tokens, record):
-        perm_map = {1: "Req", 2: "Issue", 3: "Ret", 4: "Rpt", 5: "Users"}
+        perm_map = {1: "Req", 2: "Issue", 3: "Ret", 4: "Rec", 5: "Rpt", 6: "Users"}
         names = []
         if not isinstance(tokens, list): return ""
         for t in sorted(tokens):
@@ -117,7 +117,7 @@ class UsersPage(ttk.Frame):
         p_canvas.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         p_scrollbar.pack(side="right", fill="y")
         
-        perms_map = {1: "Drawing Requests", 2: "Drawing Issuance", 3: "Return", 4: "Reports", 5: "User Management"}
+        perms_map = {1: "Drawing Requests", 2: "Drawing Issuance", 3: "Drawing Return", 4: "Drawing Receive", 5: "Reports", 6: "User Management"}
         perm_vars = {}
         current_perms = user['access_tokens'] if user else []
         for i, (pid, pname) in enumerate(sorted(perms_map.items())):

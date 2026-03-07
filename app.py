@@ -6,18 +6,20 @@ from tkinter import ttk
 from tkinter import messagebox
 from pages.drawing_requests import DrawingRequestsPage
 from pages.drawing_issuance import DrawingIssuancePage
-from pages.placeholders import ReturnPage, ReportsPage
+from pages.drawing_return import DrawingReturnPage
+from pages.drawing_receive import DrawingReceivePage
+from pages.placeholders import ReportsPage
 from pages.users_page import UsersPage
 import styles
 
 # Page permission mapping: ID -> Page Key
-# These IDs should be stored in access_tokens JSON field in drawing_users table
 PAGE_PERMISSIONS = {
     1: "Drawing Requests",
     2: "Drawing Issuance",
-    3: "Return",
-    4: "Reports",
-    5: "User Management"
+    3: "Drawing Return",
+    4: "Drawing Receive",
+    5: "Reports",
+    6: "User Management"
 }
 
 class MainApp(ttk.Frame):
@@ -96,8 +98,10 @@ class MainApp(ttk.Frame):
             self._menu_btn("Drawing Requests", "Drawing Requests").pack(fill="x")
         if "Drawing Issuance" in allowed_pages:
             self._menu_btn("Drawing Issuance", "Drawing Issuance").pack(fill="x")
-        if "Return" in allowed_pages:
-            self._menu_btn("Return", "Return").pack(fill="x")
+        if "Drawing Return" in allowed_pages:
+            self._menu_btn("Drawing Return", "Drawing Return").pack(fill="x")
+        if "Drawing Receive" in allowed_pages:
+            self._menu_btn("Drawing Receive", "Drawing Receive").pack(fill="x")
         if "Reports" in allowed_pages:
             self._menu_btn("Reports", "Reports").pack(fill="x")
         if "User Management" in allowed_pages:
@@ -138,8 +142,10 @@ class MainApp(ttk.Frame):
                 self.pages[page_key] = DrawingRequestsPage(self.content_frame, self.username)
             elif page_key == "Drawing Issuance":
                 self.pages[page_key] = DrawingIssuancePage(self.content_frame, self.username)
-            elif page_key == "Return":
-                self.pages[page_key] = ReturnPage(self.content_frame)
+            elif page_key == "Drawing Return":
+                self.pages[page_key] = DrawingReturnPage(self.content_frame, self.username)
+            elif page_key == "Drawing Receive":
+                self.pages[page_key] = DrawingReceivePage(self.content_frame, self.username)
             elif page_key == "Reports":
                 self.pages[page_key] = ReportsPage(self.content_frame)
             elif page_key == "User Management":
