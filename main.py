@@ -52,29 +52,18 @@ class LoaderFrame(tk.Frame):
             
         self.canvas.delete("all")
         
+        # Center points and radius
+        cx, cy = 40, 40
+        r = 30
+        
         # Draw circular arc
-        center_x, center_y = 40, 40
-        radius = 30
-        
-        # Calculate arc parameters
-        start_angle = self.angle
-        extent = 280  # Arc length in degrees
-        
-        # Draw the arc
         self.canvas.create_arc(
-            center_x - radius, center_y - radius,
-            center_x + radius, center_y + radius,
-            start=start_angle,
-            extent=extent,
-            outline=styles.PRIMARY,
-            width=4,
-            style="arc"
+            cx - r, cy - r, cx + r, cy + r,
+            start=self.angle, extent=280,
+            outline=styles.PRIMARY, width=4, style="arc"
         )
         
-        # Update angle for next frame
-        self.angle = (self.angle + 10) % 360
-        
-        # Schedule next frame (60 FPS = ~16ms per frame)
+        self.angle = (self.angle + 12) % 360
         self.after(16, self._animate)
 
 class LoginFrame(tk.Frame):
@@ -144,11 +133,11 @@ class LoginFrame(tk.Frame):
         thread.start()
 
     def _auth_thread(self, username, password):
-        success, permissions = auth.authenticate(username, password)
+        success, permissions, user_id = auth.authenticate(username, password)
         # Schedule update on main thread
-        self.after(0, lambda: self._on_auth_complete(success, permissions, username))
+        self.after(0, lambda: self._on_auth_complete(success, permissions, username, user_id))
 
-    def _on_auth_complete(self, success, permissions, username):
+    def _on_auth_complete(self, success, permissions, username, user_id):
         # Reset UI state
         self.login_btn.config(text="Sign In", state="normal")
         self.username_entry.config(state="normal")
@@ -156,7 +145,7 @@ class LoginFrame(tk.Frame):
         self.root.config(cursor="")
 
         if success:
-            self.on_login_success(username, permissions)
+            self.on_login_success(username, permissions, user_id)
         else:
             messagebox.showerror("Login Failed", "Invalid credentials")
             self.password_entry.delete(0, tk.END)
@@ -187,32 +176,22 @@ class DrawingSystemApp:
         
         self.main_app = None
 
-    def show_main_app(self, username, permissions):
-        # Hide login frame and show loader
+    def show_main_app(self, username, permissions, user_id):
+        # Immediate UI switch
         self.login_frame.pack_forget()
         self.loader_frame.pack(expand=True, fill="both")
         self.loader_frame.start_animation()
         
-        # Create main app in background thread
-        def create_app():
-            # Small delay to ensure loader is visible
-            import time
-            time.sleep(0.1)
-            
-            # Schedule app creation on main thread
-            self.root.after(0, lambda: self._finish_loading(username, permissions))
-        
-        thread = threading.Thread(target=create_app)
-        thread.daemon = True
-        thread.start()
+        # Start initialization process
+        self.root.after(10, lambda: self._finish_loading(username, permissions, user_id))
     
-    def _finish_loading(self, username, permissions):
+    def _finish_loading(self, username, permissions, user_id):
         """Complete the app loading process on the main thread."""
         if self.main_app:
             self.main_app.destroy()
         
         # Create and show main app immediately
-        self.main_app = MainApp(self.root, username, permissions, self.logout)
+        self.main_app = MainApp(self.root, username, permissions, user_id, self.logout)
         
         # Hide loader and show main app
         self.loader_frame.stop_animation()

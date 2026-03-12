@@ -38,7 +38,8 @@ class CanvasDataTable(ttk.Frame):
                  get_action_buttons_func=None,
                  search_placeholder="Search records...",
                  search_keys=None,
-                 cell_formatters=None):
+                 cell_formatters=None,
+                 data_keys=None):
         
         ttk.Frame.__init__(self, parent, style="Card.TFrame", padding=25)
         
@@ -61,6 +62,7 @@ class CanvasDataTable(ttk.Frame):
         self.hover_row = -1
         self.hover_button = -1
         self.dragging_col = -1
+        self.data_keys = data_keys or []
         
         self._build_ui()
         self.update_idletasks()
@@ -203,28 +205,44 @@ class CanvasDataTable(ttk.Frame):
         except:
             pass
 
-    def refresh(self):
+    def refresh(self, reset_pagination=True, silent=False):
         if self.is_loading: return
         self.is_loading = True
-        self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
-        thread = threading.Thread(target=self._load_data_thread, daemon=True)
-        self.canvas.yview_moveto(0)
+        
+        # Subtle loading state only if not silent
+        if not silent:
+            self.refresh_btn.config(state="disabled", text="Refreshing...")
+            
+            # Show prominent loading only on initial load (empty data)
+            if not self.data:
+                self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
+            
+        thread = threading.Thread(target=self._load_data_thread, args=(reset_pagination, silent), daemon=True)
+        if reset_pagination:
+            self.canvas.yview_moveto(0)
         thread.start()
 
-    def _load_data_thread(self):
-        if self.fetch_data_func:
-            data = self.fetch_data_func()
-            self.after(0, lambda: self._on_data_ready(data))
-        else:
-            self.after(0, lambda: self._on_data_ready([]))
+    def _load_data_thread(self, reset_pagination=True, silent=False):
+        try:
+            if self.fetch_data_func:
+                data = self.fetch_data_func()
+                self.after(0, lambda: self._on_data_ready(data, reset_pagination, silent))
+            else:
+                self.after(0, lambda: self._on_data_ready([], reset_pagination, silent))
+        except Exception as e:
+            print("Error in fetch thread: {}".format(e))
+            self.after(0, lambda: self.refresh_btn.config(state="normal", text="Refresh"))
+            self.is_loading = False
 
-    def _on_data_ready(self, data):
+    def _on_data_ready(self, data, reset_pagination=True, silent=False):
         self.data = data
         self.is_loading = False
+        if not silent:
+            self.refresh_btn.config(state="normal", text="Refresh")
         self.loading_label.place_forget()
-        self._apply_search()
+        self._apply_search(reset_pagination)
 
-    def _apply_search(self):
+    def _apply_search(self, reset_pagination=True):
         query = self.search_var.get().lower().strip()
         if query in ("", self.search_placeholder.lower()):
             self.filtered = list(self.data)
@@ -240,8 +258,18 @@ class CanvasDataTable(ttk.Frame):
                         break
                 if match:
                     self.filtered.append(d)
-        self.current_page = 0
-        self.canvas.yview_moveto(0)
+        
+        if reset_pagination:
+            self.current_page = 0
+            self.canvas.yview_moveto(0)
+        else:
+            # Clamp current_page to valid range for new data size
+            total = len(self.filtered)
+            max_p = max(0, (total - 1) // self.page_size)
+            if self.current_page > max_p:
+                self.current_page = max_p
+                self.canvas.yview_moveto(0)
+                
         self._redraw_table()
 
     def _search_data(self, *args):
@@ -420,10 +448,10 @@ class CanvasDataTable(ttk.Frame):
                     new_btn = int(parts[3])
 
         redraw_needed = (new_row != self.hover_row or new_btn != self.hover_button)
-        self.hover_row = new_row
-        self.hover_button = new_btn
-
+        
         if redraw_needed:
+            self.hover_row = new_row
+            self.hover_button = new_btn
             self._redraw_table()
 
         if new_btn != -1:

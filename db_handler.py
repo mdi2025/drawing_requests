@@ -13,6 +13,7 @@ class DBHandler:
         self.password = "erpdeveloper"
         self.dbname = "mdiacc"
         self.conn = None
+        self.lock = threading.Lock()
 
     def warm_up(self):
         """Pre-establishes the database connection in a background thread."""
@@ -29,6 +30,45 @@ class DBHandler:
 
     def get_connection(self):
         """Returns a database connection."""
+        with self.lock:
+            try:
+                if self.conn is None or not self.conn.open:
+                    self.conn = pymysql.connect(
+                        host=self.host,
+                        user=self.user,
+                        passwd=self.password,
+                        db=self.dbname,
+                        charset='utf8',
+                        cursorclass=pymysql.cursors.DictCursor,
+                        autocommit=True
+                    )
+                return self.conn
+            except pymysql.Error as e:
+                print("Error connecting to MySQL Database: {}".format(e))
+                return None
+
+    def fetch_all(self, query, params=None):
+        """Executes a query and returns all results."""
+        with self.lock:
+            conn = self._get_connection_no_lock()
+            if not conn:
+                return []
+            
+            cursor = conn.cursor()
+            try:
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                return cursor.fetchall()
+            except pymysql.Error as e:
+                print("Error executing query: {}".format(e))
+                return []
+            finally:
+                cursor.close()
+
+    def _get_connection_no_lock(self):
+        """Internal helper to get connection without acquiring lock."""
         try:
             if self.conn is None or not self.conn.open:
                 self.conn = pymysql.connect(
@@ -45,45 +85,27 @@ class DBHandler:
             print("Error connecting to MySQL Database: {}".format(e))
             return None
 
-    def fetch_all(self, query, params=None):
-        """Executes a query and returns all results."""
-        conn = self.get_connection()
-        if not conn:
-            return []
-        
-        cursor = conn.cursor()
-        try:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            return cursor.fetchall()
-        except pymysql.Error as e:
-            print("Error executing query: {}".format(e))
-            return []
-        finally:
-            cursor.close()
-
     def execute_query(self, query, params=None):
         """Executes a query (INSERT, UPDATE, DELETE)."""
-        conn = self.get_connection()
-        if not conn:
-            return False
-        
-        cursor = conn.cursor()
-        try:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            conn.commit()
-            return True
-        except pymysql.Error as e:
-            print("Error executing query: {}".format(e))
-            conn.rollback()
-            return False
-        finally:
-            cursor.close()
+        with self.lock:
+            conn = self._get_connection_no_lock()
+            if not conn:
+                return False
+            
+            cursor = conn.cursor()
+            try:
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                conn.commit()
+                return True
+            except pymysql.Error as e:
+                print("Error executing query: {}".format(e))
+                conn.rollback()
+                return False
+            finally:
+                cursor.close()
 
     def close(self):
         """Closes the connection."""

@@ -23,11 +23,12 @@ PAGE_PERMISSIONS = {
 }
 
 class MainApp(ttk.Frame):
-    def __init__(self, parent, username, permissions, logout_callback):
+    def __init__(self, parent, username, permissions, user_id, logout_callback):
         ttk.Frame.__init__(self, parent)
         self.parent = parent
         self.username = username
         self.permissions = permissions  # List of page IDs user has access to
+        self.user_id = user_id
         self.logout_callback = logout_callback
         self.pages = {}
         self.current_page = None
@@ -139,11 +140,11 @@ class MainApp(ttk.Frame):
         # Get or create page
         if page_key not in self.pages:
             if page_key == "Drawing Requests":
-                self.pages[page_key] = DrawingRequestsPage(self.content_frame, self.username)
+                self.pages[page_key] = DrawingRequestsPage(self.content_frame, self.username, self.user_id)
             elif page_key == "Drawing Issuance":
                 self.pages[page_key] = DrawingIssuancePage(self.content_frame, self.username)
             elif page_key == "Drawing Return":
-                self.pages[page_key] = DrawingReturnPage(self.content_frame, self.username)
+                self.pages[page_key] = DrawingReturnPage(self.content_frame, self.username, self.user_id)
             elif page_key == "Drawing Receive":
                 self.pages[page_key] = DrawingReceivePage(self.content_frame, self.username)
             elif page_key == "Reports":
@@ -155,7 +156,7 @@ class MainApp(ttk.Frame):
         self.current_page = self.pages.get(page_key)
         if self.current_page:
             self.current_page.pack(fill="both", expand=True, padx=20, pady=20)
-            # Refresh data in background if the page supports it
+            # Refresh data after a small delay to keep UI snappy
             if hasattr(self.current_page, 'refresh'):
-                self.current_page.refresh()
+                self.after(50, lambda: self.current_page.refresh(reset_pagination=False, silent=True))
 

@@ -55,9 +55,9 @@ def authenticate(username, password):
             if not isinstance(access_tokens, list):
                 access_tokens = []
                 
-            return (True, access_tokens)
-        return (False, [])
+            return (True, access_tokens, user.get('id'))
+        return (False, [], None)
         
     except Exception as e:
         print("Authentication error: {}".format(e))
-        return (False, [])
+        return (False, [], None)

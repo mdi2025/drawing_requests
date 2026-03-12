@@ -175,5 +175,5 @@ class UsersPage(ttk.Frame):
             else: messagebox.showerror("Error", "Failed")
         except Exception as e: messagebox.showerror("Error", str(e))
 
-    def refresh(self):
-        self.table.refresh()
+    def refresh(self, reset_pagination=True, silent=False):
+        self.table.refresh(reset_pagination=reset_pagination, silent=silent)

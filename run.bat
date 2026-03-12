@@ -13,7 +13,8 @@ CREATE TABLE `master_data_new` (
   `symbol` text NOT NULL,
   `length` double(15,2) DEFAULT NULL,
   `personal_description` text,
-  `item_code` text NOT NULL,
+  `item_code` text NOT NULL
+  
   `approved_on` text NOT NULL,
   `approved_status` text NOT NULL,
   `cust_supplied` text NOT NULL,
