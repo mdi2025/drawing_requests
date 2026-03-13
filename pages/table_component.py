@@ -44,7 +44,18 @@ class CanvasDataTable(ttk.Frame):
         ttk.Frame.__init__(self, parent, style="Card.TFrame", padding=25)
         
         self.title = title
-        self.headers = headers or ["ID", "Name", "Action"]
+        
+        # Identify ID/Auto ID columns to replace with S.No
+        provided_headers = headers or ["ID", "Name", "Action"]
+        self.headers = []
+        self.id_col_index = -1
+        for i, h in enumerate(provided_headers):
+            if h.lower() in ("id", "auto id") and self.id_col_index == -1:
+                self.id_col_index = i
+                self.headers.append("S.No")
+            else:
+                self.headers.append(h)
+                
         self.col_widths = initial_widths or [100, 200, 150]
         self.page_size = page_size
         self.fetch_data_func = fetch_data_func
@@ -345,17 +356,21 @@ class CanvasDataTable(ttk.Frame):
                                             fill=row_bg, outline="#e2e8f0", width=1,
                                             tags=("row%d" % global_idx, "cell"))
                 
-                # Get value - use formatter if exists
+                # Get value - use serial number if this is the S.No column
                 raw_val = ""
-                if hasattr(self, 'data_keys') and col_idx < len(self.data_keys):
-                    key = self.data_keys[col_idx]
-                    raw_val = d.get(key, "")
-                
-                # Apply custom formatting if any
-                if col_idx in self.cell_formatters:
-                    display_val = self.cell_formatters[col_idx](raw_val, d)
+                if col_idx == self.id_col_index:
+                    raw_val = str(global_idx + 1)
+                    display_val = (raw_val, "#1f2937", ("Segoe UI", 10), "center")
                 else:
-                    display_val = raw_val
+                    if hasattr(self, 'data_keys') and col_idx < len(self.data_keys):
+                        key = self.data_keys[col_idx]
+                        raw_val = d.get(key, "")
+                    
+                    # Apply custom formatting if any
+                    if col_idx in self.cell_formatters:
+                        display_val = self.cell_formatters[col_idx](raw_val, d)
+                    else:
+                        display_val = raw_val
 
                 padx = 12
                 # Defaults

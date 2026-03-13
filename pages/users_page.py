@@ -147,7 +147,7 @@ class UsersPage(ttk.Frame):
             pwd_hash = hashlib.md5(password.encode('utf-8')).hexdigest()
             if db.execute_query("INSERT INTO drawing_users (admin_name, admin_pass, department, access_tokens) VALUES (%s, %s, %s, %s)",
                                (username, pwd_hash, department, json.dumps(perms))):
-                messagebox.showinfo("Success", "User created", parent=dlg); dlg.destroy(); self.refresh()
+                messagebox.showinfo("Success", "User created", parent=dlg); dlg.destroy(); self.refresh(reset_pagination=False)
             else: messagebox.showerror("Error", "Failed", parent=dlg)
         except Exception as e: messagebox.showerror("Error", str(e), parent=dlg)
 
@@ -162,7 +162,7 @@ class UsersPage(ttk.Frame):
                 q = "UPDATE drawing_users SET admin_name=%s, department=%s, access_tokens=%s WHERE id=%s"
                 p = (username, department, json.dumps(perms), uid)
             if db.execute_query(q, p):
-                messagebox.showinfo("Success", "User updated", parent=dlg); dlg.destroy(); self.refresh()
+                messagebox.showinfo("Success", "User updated", parent=dlg); dlg.destroy(); self.refresh(reset_pagination=False)
             else: messagebox.showerror("Error", "Failed", parent=dlg)
         except Exception as e: messagebox.showerror("Error", str(e), parent=dlg)
 
@@ -171,7 +171,7 @@ class UsersPage(ttk.Frame):
         try:
             from db_handler import db
             if db.execute_query("DELETE FROM drawing_users WHERE id=%s", (user['id'],)):
-                messagebox.showinfo("Success", "Deleted"); self.refresh()
+                messagebox.showinfo("Success", "Deleted"); self.refresh(reset_pagination=False)
             else: messagebox.showerror("Error", "Failed")
         except Exception as e: messagebox.showerror("Error", str(e))
 

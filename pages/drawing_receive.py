@@ -45,7 +45,7 @@ class DrawingReceivePage(ttk.Frame):
                     m.revision AS rev,
                     r.status,
                     u.admin_name AS returned_by,
-                    DATE_FORMAT(r.request_timestamp, '%%d-%%m-%%Y %%H:%%i') AS return_date
+                    DATE_FORMAT(r.request_timestamp, '%d-%m-%Y %H:%i') AS return_date
                 FROM drawing_requests r
                 JOIN master_data_new m ON r.drawing_ref_id = m.auto_id
                 JOIN drawing_users u ON r.user_id = u.id

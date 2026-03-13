@@ -61,10 +61,12 @@ class DrawingRequestsPage(ttk.Frame):
                     m.catalog AS no,
                     m.revision AS rev,
                     m.approved_status AS status,
-                    CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.request_timestamp, '%d-%m-%Y %H:%i')) AS requested_by
+                    (SELECT CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.request_timestamp, '%d-%m-%Y %H:%i'))
+                     FROM drawing_requests r
+                     JOIN drawing_users u ON r.user_id = u.id
+                     WHERE r.drawing_ref_id = m.auto_id 
+                     LIMIT 1) AS requested_by
                 FROM master_data_new m
-                LEFT JOIN drawing_requests r ON m.auto_id = r.drawing_ref_id
-                LEFT JOIN drawing_users u ON r.user_id = u.id
                 WHERE m.approved_status = 'Approved'
             """
 
@@ -115,11 +117,21 @@ class DrawingRequestsPage(ttk.Frame):
             return
 
         # Double check if already requested in DB to avoid race conditions
-        check_query = "SELECT request_id FROM drawing_requests WHERE drawing_ref_id = %s"
+        # Enhanced check query to see WHO requested it
+        check_query = """
+            SELECT u.admin_name, DATE_FORMAT(r.request_timestamp, '%%d-%%m-%%Y %%H:%%i') as ts
+            FROM drawing_requests r
+            JOIN drawing_users u ON r.user_id = u.id
+            WHERE r.drawing_ref_id = %s
+        """
         existing = db.fetch_all(check_query, (drawing_id,))
         if existing:
-            messagebox.showwarning("Already Requested", "This drawing has already been requested.")
+            # Refresh first so UI is correct behind the dialog
             self.refresh(reset_pagination=False)
+            
+            info = existing[0]
+            messagebox.showwarning("Already Requested", 
+                "This drawing has already been requested by %s at %s." % (info['admin_name'], info['ts']))
             return
 
         # Save to database

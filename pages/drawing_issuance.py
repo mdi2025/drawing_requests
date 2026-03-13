@@ -72,7 +72,7 @@ class DrawingIssuancePage(ttk.Frame):
         query = "UPDATE drawing_requests SET status = 'Issued' WHERE request_id = %s"
         if db.execute_query(query, (request_id,)):
             messagebox.showinfo("Issuance", "Drawing %s has been issued successfully." % drawing_no)
-            self.refresh()
+            self.refresh(reset_pagination=False)
         else:
             messagebox.showerror("Error", "Failed to update status in database.")
 
@@ -88,7 +88,7 @@ class DrawingIssuancePage(ttk.Frame):
             query = "DELETE FROM drawing_requests WHERE request_id = %s"
             if db.execute_query(query, (request_id,)):
                 messagebox.showinfo("Rejected", "Request for %s has been removed." % drawing_no)
-                self.refresh()
+                self.refresh(reset_pagination=False)
             else:
                 messagebox.showerror("Error", "Failed to remove request from database.")
 
