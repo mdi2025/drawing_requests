@@ -40,15 +40,16 @@ class DrawingReturnPage(ttk.Frame):
 
             query = """
                 SELECT 
-                    r.request_id AS id,
+                    r.id,
                     m.catalog AS no,
                     m.revision AS rev,
                     r.status,
-                    DATE_FORMAT(r.request_timestamp, '%%d-%%m-%%Y %%H:%%i') AS issue_date
+                    DATE_FORMAT(h.performed_at, '%%d-%%m-%%Y %%H:%%i') AS issue_date
                 FROM drawing_requests r
-                JOIN master_data_new m ON r.drawing_ref_id = m.auto_id
-                WHERE r.status = 'Issued' AND r.user_id = %s
-                ORDER BY r.request_timestamp DESC
+                JOIN master_data_new m ON r.auto_id = m.auto_id
+                LEFT JOIN drawing_request_history h ON r.id = h.request_id AND h.event_type = 'issued'
+                WHERE r.status = 'Issued' AND r.requested_by = %s
+                ORDER BY h.performed_at DESC
             """
             rows = db.fetch_all(query, (self.user_id,))
             return rows
@@ -68,8 +69,16 @@ class DrawingReturnPage(ttk.Frame):
         if not messagebox.askyesno("Confirm Return", "Are you sure you want to return Drawing %s?" % drawing_no):
             return
 
-        query = "UPDATE drawing_requests SET status = 'Returned' WHERE request_id = %s"
+        query = "UPDATE drawing_requests SET status = 'Returned' WHERE id = %s"
         if db.execute_query(query, (request_id,)):
+            # Log to history
+            insert_history = """
+                INSERT INTO drawing_request_history 
+                (request_id, event_type, performed_by, remarks) 
+                VALUES (%s, 'returned', %s, 'Drawing returned')
+            """
+            db.execute_query(insert_history, (request_id, self.user_id or 1))
+
             # Instant UI feedback: remove from current list
             self.table.data = [d for d in self.table.data if d["id"] != request_id]
             self.table._apply_search(reset_pagination=False)

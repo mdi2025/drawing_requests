@@ -8,9 +8,10 @@ from pages.table_component import CanvasDataTable
 from db_handler import db
 
 class DrawingReceivePage(ttk.Frame):
-    def __init__(self, parent, username="User"):
+    def __init__(self, parent, username="User", user_id=None):
         ttk.Frame.__init__(self, parent)
         self.username = username
+        self.user_id = user_id
         
         self.table = CanvasDataTable(
             self,
@@ -40,17 +41,17 @@ class DrawingReceivePage(ttk.Frame):
         try:
             query = """
                 SELECT 
-                    r.request_id AS id,
+                    r.id,
                     m.catalog AS no,
                     m.revision AS rev,
                     r.status,
                     u.admin_name AS returned_by,
-                    DATE_FORMAT(r.request_timestamp, '%d-%m-%Y %H:%i') AS return_date
+                    DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i') AS return_date
                 FROM drawing_requests r
-                JOIN master_data_new m ON r.drawing_ref_id = m.auto_id
-                JOIN drawing_users u ON r.user_id = u.id
+                JOIN master_data_new m ON r.auto_id = m.auto_id
+                JOIN drawing_users u ON r.requested_by = u.id
                 WHERE r.status = 'Returned'
-                ORDER BY r.request_timestamp DESC
+                ORDER BY r.requested_at DESC
             """
             rows = db.fetch_all(query)
             return rows
@@ -70,8 +71,16 @@ class DrawingReceivePage(ttk.Frame):
         if not messagebox.askyesno("Confirm Receive", "Are you sure you want to receive Drawing %s?" % drawing_no):
             return
 
+        # Log to history BEFORE deleting the request
+        insert_history = """
+            INSERT INTO drawing_request_history 
+            (request_id, event_type, performed_by, remarks) 
+            VALUES (%s, 'received', %s, 'Drawing received')
+        """
+        db.execute_query(insert_history, (request_id, self.user_id or 1))
+
         # Complete the lifecycle by removing the request record
-        query = "DELETE FROM drawing_requests WHERE request_id = %s"
+        query = "DELETE FROM drawing_requests WHERE id = %s"
         if db.execute_query(query, (request_id,)):
             # Instant UI feedback
             self.table.data = [d for d in self.table.data if d["id"] != request_id]

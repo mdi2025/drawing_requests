@@ -57,17 +57,23 @@ class DrawingRequestsPage(ttk.Frame):
 
             query = """
                 SELECT 
+                    m.catalog AS no, 
+                    m.revision AS rev, 
+                    m.approved_status AS status, 
                     m.auto_id AS id,
-                    m.catalog AS no,
-                    m.revision AS rev,
-                    m.approved_status AS status,
-                    (SELECT CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.request_timestamp, '%d-%m-%Y %H:%i'))
+                    (SELECT CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i'))
                      FROM drawing_requests r
-                     JOIN drawing_users u ON r.user_id = u.id
-                     WHERE r.drawing_ref_id = m.auto_id 
+                     JOIN drawing_users u ON r.requested_by = u.id
+                     WHERE r.auto_id = m.auto_id 
                      LIMIT 1) AS requested_by
                 FROM master_data_new m
-                WHERE m.approved_status = 'Approved'
+                JOIN (
+                    SELECT catalog, MAX(auto_id) AS max_auto_id
+                    FROM master_data_new
+                    WHERE approved_status = 'approved'
+                    GROUP BY catalog
+                ) AS t ON m.catalog = t.catalog AND m.auto_id = t.max_auto_id
+                ORDER BY m.catalog;
             """
 
             rows = db.fetch_all(query)
@@ -101,12 +107,13 @@ class DrawingRequestsPage(ttk.Frame):
 
     def _request_drawing(self, drawing):
 
-        drawing_id = drawing.get("id")
-        drawing_no = drawing.get("no")
+        auto_id = drawing.get("id")
+        catalog = drawing.get("no")
+        revision = drawing.get("rev")
 
         confirm = messagebox.askyesno(
             "Confirm Request",
-            "Request drawing Auto ID %s (Drawing No: %s)?" % (drawing_id, drawing_no)
+            "Request drawing %s (Revision: %s)?" % (catalog, revision)
         )
 
         if not confirm:
@@ -116,27 +123,40 @@ class DrawingRequestsPage(ttk.Frame):
             messagebox.showerror("Error", "User session not found. Please log in again.")
             return
 
-        # Double check if already requested in DB to avoid race conditions
-        # Enhanced check query to see WHO requested it
+        # Double check if already requested
         check_query = """
-            SELECT u.admin_name, DATE_FORMAT(r.request_timestamp, '%%d-%%m-%%Y %%H:%%i') as ts
+            SELECT u.admin_name, DATE_FORMAT(r.requested_at, '%%d-%%m-%%Y %%H:%%i') as ts
             FROM drawing_requests r
-            JOIN drawing_users u ON r.user_id = u.id
-            WHERE r.drawing_ref_id = %s
+            JOIN drawing_users u ON r.requested_by = u.id
+            WHERE r.auto_id = %s
         """
-        existing = db.fetch_all(check_query, (drawing_id,))
+        existing = db.fetch_all(check_query, (auto_id,))
         if existing:
-            # Refresh first so UI is correct behind the dialog
             self.refresh(reset_pagination=False)
-            
             info = existing[0]
             messagebox.showwarning("Already Requested", 
                 "This drawing has already been requested by %s at %s." % (info['admin_name'], info['ts']))
             return
 
-        # Save to database
-        insert_query = "INSERT INTO drawing_requests (drawing_ref_id, user_id) VALUES (%s, %s)"
-        if db.execute_query(insert_query, (drawing_id, self.user_id)):
+        # Save to drawing_requests
+        insert_request = """
+            INSERT INTO drawing_requests 
+            (drawing_id, revision, auto_id, requested_by, status) 
+            VALUES (%s, %s, %s, %s, 'Pending')
+        """
+        
+        # Get last insert ID for history
+        request_id = db.execute_insert(insert_request, (catalog, revision, auto_id, self.user_id))
+        
+        if request_id:
+            # Save to drawing_request_history
+            insert_history = """
+                INSERT INTO drawing_request_history 
+                (request_id, event_type, performed_by, remarks) 
+                VALUES (%s, 'requested', %s, 'Initial request')
+            """
+            db.execute_query(insert_history, (request_id, self.user_id))
+
             # Update local state for instant feedback
             now_str = datetime.datetime.now().strftime('%d-%m-%Y %H:%M')
             drawing["requested_by"] = "%s at %s" % (self.username, now_str)
@@ -144,7 +164,7 @@ class DrawingRequestsPage(ttk.Frame):
             
             messagebox.showinfo(
                 "Success",
-                "Request submitted for Auto ID %s" % drawing_id
+                "Request submitted for drawing %s" % catalog
             )
         else:
             messagebox.showerror("Error", "Failed to submit request to database.")

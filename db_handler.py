@@ -107,6 +107,27 @@ class DBHandler:
             finally:
                 cursor.close()
 
+    def execute_insert(self, query, params=None):
+        """Executes an INSERT query and returns the last insert ID."""
+        with self.lock:
+            conn = self._get_connection_no_lock()
+            if not conn:
+                return None
+            
+            cursor = conn.cursor()
+            try:
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                last_id = cursor.lastrowid
+                return last_id
+            except pymysql.Error as e:
+                print("Error executing query: {}".format(e))
+                return None
+            finally:
+                cursor.close()
+
     def close(self):
         """Closes the connection."""
         if self.conn:

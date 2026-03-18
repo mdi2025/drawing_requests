@@ -142,11 +142,11 @@ class MainApp(ttk.Frame):
             if page_key == "Drawing Requests":
                 self.pages[page_key] = DrawingRequestsPage(self.content_frame, self.username, self.user_id)
             elif page_key == "Drawing Issuance":
-                self.pages[page_key] = DrawingIssuancePage(self.content_frame, self.username)
+                self.pages[page_key] = DrawingIssuancePage(self.content_frame, self.username, self.user_id)
             elif page_key == "Drawing Return":
                 self.pages[page_key] = DrawingReturnPage(self.content_frame, self.username, self.user_id)
             elif page_key == "Drawing Receive":
-                self.pages[page_key] = DrawingReceivePage(self.content_frame, self.username)
+                self.pages[page_key] = DrawingReceivePage(self.content_frame, self.username, self.user_id)
             elif page_key == "Reports":
                 self.pages[page_key] = ReportsPage(self.content_frame)
             elif page_key == "User Management":

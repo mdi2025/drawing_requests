@@ -401,24 +401,41 @@ class CanvasDataTable(ttk.Frame):
             
             if self.get_action_buttons_func:
                 buttons = self.get_action_buttons_func(d)
-                btn_count = len(buttons)
-                # Standard width for buttons now
-                btn_width = 85 if btn_count > 1 else 100
-                total_btn_width = (btn_width * btn_count) + (10 * (btn_count - 1))
-                start_x = x + (w - total_btn_width) // 2
-                
-                btn_x = start_x
-                btn_y = y + 8
-                for btn_idx, (text, bg, fg_color, cb) in enumerate(buttons):
-                    hovered = (global_idx == self.hover_row and btn_idx == self.hover_button)
-                    tags = ("action-btn-%d-%d" % (global_idx, btn_idx), "row%d" % global_idx)
-                    self.canvas.create_rectangle(btn_x, btn_y, btn_x + btn_width, btn_y + self.row_height - 16,
-                                                fill=bg, outline="#1d4ed8" if hovered else "#d1d5db",
-                                                width=2 if hovered else 1, tags=tags)
-                    self.canvas.create_text(btn_x + btn_width//2, btn_y + (self.row_height-16)//2,
-                                           text=text, fill=fg_color,
-                                           font=("Segoe UI", 9, "bold"), anchor="center", tags=tags)
-                    btn_x += btn_width + 10
+                if isinstance(buttons, list):
+                    btn_count = len(buttons)
+                    # Standard width for buttons now
+                    btn_width = 85 if btn_count > 1 else 100
+                    total_btn_width = (btn_width * btn_count) + (10 * (btn_count - 1))
+                    start_x = x + (w - total_btn_width) // 2
+                    
+                    btn_x = start_x
+                    btn_y = y + 8
+                    for btn_idx, (text, bg, fg_color, cb) in enumerate(buttons):
+                        hovered = (global_idx == self.hover_row and btn_idx == self.hover_button)
+                        tags = ("action-btn-%d-%d" % (global_idx, btn_idx), "row%d" % global_idx)
+                        self.canvas.create_rectangle(btn_x, btn_y, btn_x + btn_width, btn_y + self.row_height - 16,
+                                                    fill=bg, outline="#1d4ed8" if hovered else "#d1d5db",
+                                                    width=2 if hovered else 1, tags=tags)
+                        self.canvas.create_text(btn_x + btn_width//2, btn_y + (self.row_height-16)//2,
+                                               text=text, fill=fg_color,
+                                               font=("Segoe UI", 9, "bold"), anchor="center", tags=tags)
+                        btn_x += btn_width + 10
+                elif isinstance(buttons, tuple) or isinstance(buttons, str):
+                    # Show as label
+                    display_val = buttons
+                    if isinstance(display_val, tuple):
+                        val_text, fg, font, anchor = display_val
+                    else:
+                        val_text = display_val
+                        fg = "#1f2937"
+                        font = ("Segoe UI", 10)
+                        anchor = "center"
+                    
+                    text_x = x + w//2 if anchor == "center" else x + 12
+                    self.canvas.create_text(text_x, y + self.row_height//2,
+                                           text=self._truncate_text(val_text, w), 
+                                           fill=fg, font=font,
+                                           anchor=anchor, tags=("row%d" % global_idx,))
             
             y += self.row_height
 
