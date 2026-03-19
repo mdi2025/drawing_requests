@@ -50,7 +50,7 @@ class CanvasDataTable(ttk.Frame):
         self.headers = []
         self.id_col_index = -1
         for i, h in enumerate(provided_headers):
-            if h.lower() in ("id", "auto id") and self.id_col_index == -1:
+            if h.lower() in ("id", "auto id", "sno", "s.no") and self.id_col_index == -1:
                 self.id_col_index = i
                 self.headers.append("S.No")
             else:

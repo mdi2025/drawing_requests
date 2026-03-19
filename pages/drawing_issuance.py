@@ -16,26 +16,30 @@ class DrawingIssuancePage(ttk.Frame):
         self.table = CanvasDataTable(
             self,
             title="Drawing Issuance",
-            headers=["Auto ID", "Drawing ID", "Revision", "Requested By", "Status", "Actions"],
-            initial_widths=[100, 150, 80, 250, 120, 300],
+            headers=["SNo", "Drawing ID", "Revision", "Requested By", "Status", "Actions"],
+            initial_widths=[80, 150, 80, 250, 120, 300],
             fetch_data_func=self._fetch_requests,
             get_action_buttons_func=self._get_actions,
             search_placeholder="Search requests...",
-            search_keys=["auto_id", "no", "rev", "status", "requested_by", "issued_info", "rejected_info"],
+            search_keys=["no", "rev", "status", "requested_by", "issued_info", "rejected_info"],
             cell_formatters={
                 3: self._format_requested_by,
                 4: self._format_status
             }
         )
-        self.table.data_keys = ["auto_id", "no", "rev", "requested_by", "status", "id"]
+        self.table.data_keys = ["id", "no", "rev", "requested_by", "status"]
         self.table.pack(expand=True, fill="both")
         self.pack_propagate(False)
 
     def _format_status(self, val, record):
-        return str(val).upper(), "#1f2937", ("Segoe UI", 10), "center"
+        s = str(val).lower()
+        if s == "rejected": color = "#ef4444"
+        elif s == "issued": color = "#008000"
+        else: color = "#1f2937"
+        return str(val).upper(), color, ("Segoe UI", 10), "center"
 
     def _format_requested_by(self, val, record):
-        return val, "#4f46e5", ("Segoe UI", 9, "italic"), "w"
+        return val, "#1f2937", ("Segoe UI", 10), "w"
 
     def _fetch_requests(self):
         try:
@@ -43,9 +47,8 @@ class DrawingIssuancePage(ttk.Frame):
             query = """
                 SELECT 
                     r.id,
-                    r.auto_id,
-                    m.catalog AS no,
-                    m.revision AS rev,
+                    r.drawing_id AS no,
+                    r.revision AS rev,
                     r.status,
                     CONCAT(u_req.admin_name, ' at ', DATE_FORMAT(h_req.performed_at, '%d-%m-%Y %H:%i')) AS requested_by,
                     (SELECT CONCAT(u_iss.admin_name, ' at ', DATE_FORMAT(h_iss.performed_at, '%d-%m-%Y %H:%i'))
@@ -59,10 +62,9 @@ class DrawingIssuancePage(ttk.Frame):
                      WHERE h_rej.request_id = r.id AND h_rej.event_type = 'rejected'
                      LIMIT 1) AS rejected_info
                 FROM drawing_requests r
-                JOIN master_data_new m ON r.auto_id = m.auto_id
                 JOIN drawing_request_history h_req ON r.id = h_req.request_id AND h_req.event_type = 'requested'
                 JOIN drawing_users u_req ON h_req.performed_by = u_req.id
-                WHERE r.status IN ('Pending', 'open', 'Issued', 'Rejected')
+                WHERE r.status IN ('Pending', 'open', 'Issued', 'Rejected', 'Returned')
                 ORDER BY r.id DESC
                 LIMIT 500
             """
@@ -79,12 +81,15 @@ class DrawingIssuancePage(ttk.Frame):
             buttons.append(("Issue", "#10b981", "white", self._handle_issue))
             buttons.append(("Reject", "#ef4444", "white", self._handle_reject))
             return buttons
-        elif status == 'Issued':
-            info = record.get("issued_info", "Issued")
-            return (info, "#4f46e5", ("Segoe UI", 9, "italic"), "w")
+  
         elif status == 'Rejected':
             info = record.get("rejected_info", "Rejected")
-            return (info, "#4f46e5", ("Segoe UI", 9, "italic"), "w")
+            if info and info != "Rejected": info = "Rejected by " + info
+            return (info, "#ef4444", ("Segoe UI", 9, "italic"), "center")
+        else :
+            info = record.get("issued_info", "Issued")
+            if info and info != "Issued": info = "Issued by " + info
+            return (info, "#008000", ("Segoe UI", 9, "italic"), "center")
         return []
 
     def _handle_issue(self, record):

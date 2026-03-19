@@ -21,12 +21,12 @@ class DrawingRequestsPage(ttk.Frame):
         self.table = CanvasDataTable(
             self,
             title="Drawing Requisitions",
-            headers=["Auto ID", "Drawing ID", "Revision", "Status", "Requested By", "Action"],
-            initial_widths=[100, 200, 100, 140, 300, 140],
+            headers=["SNo", "Drawing ID", "Revision", "Status", "Requested By", "Action"],
+            initial_widths=[80, 200, 100, 140, 300, 140],
             fetch_data_func=self._fetch_drawings,
             get_action_buttons_func=self._get_actions,
             search_placeholder="Search drawings...",
-            search_keys=["id", "no", "rev", "status", "requested_by"],
+            search_keys=["no", "rev", "status", "requested_by"],
             cell_formatters={
                 3: self._format_status,
                 4: self._format_requested_by
@@ -64,7 +64,7 @@ class DrawingRequestsPage(ttk.Frame):
                     (SELECT CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i'))
                      FROM drawing_requests r
                      JOIN drawing_users u ON r.requested_by = u.id
-                     WHERE r.auto_id = m.auto_id 
+                     WHERE r.drawing_id = m.catalog AND r.revision = m.revision
                      LIMIT 1) AS requested_by
                 FROM master_data_new m
                 JOIN (
@@ -128,9 +128,9 @@ class DrawingRequestsPage(ttk.Frame):
             SELECT u.admin_name, DATE_FORMAT(r.requested_at, '%%d-%%m-%%Y %%H:%%i') as ts
             FROM drawing_requests r
             JOIN drawing_users u ON r.requested_by = u.id
-            WHERE r.auto_id = %s
+            WHERE r.drawing_id = %s AND r.revision = %s
         """
-        existing = db.fetch_all(check_query, (auto_id,))
+        existing = db.fetch_all(check_query, (catalog, revision))
         if existing:
             self.refresh(reset_pagination=False)
             info = existing[0]
