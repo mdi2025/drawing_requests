@@ -10,7 +10,7 @@ import styles
 from pages.table_component import CanvasDataTable
 
 class UsersPage(ttk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, on_data_ready=None):
         ttk.Frame.__init__(self, parent)
         
         self.table = CanvasDataTable(
@@ -25,7 +25,8 @@ class UsersPage(ttk.Frame):
             cell_formatters={
                 0: lambda v, r: (str(v), "#1f2937", ("Segoe UI", 10), "center"),
                 3: self._format_permissions
-            }
+            },
+            on_data_ready_callback=on_data_ready
         )
         self.table.data_keys = ["id", "admin_name", "department", "access_tokens"]
         
@@ -175,5 +176,5 @@ class UsersPage(ttk.Frame):
             else: messagebox.showerror("Error", "Failed")
         except Exception as e: messagebox.showerror("Error", str(e))
 
-    def refresh(self, reset_pagination=True, silent=False):
-        self.table.refresh(reset_pagination=reset_pagination, silent=silent)
+    def refresh(self, reset_pagination=True, silent=False, button_silent=False):
+        self.table.refresh(reset_pagination=reset_pagination, silent=silent, button_silent=button_silent)

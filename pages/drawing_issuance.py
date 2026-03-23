@@ -8,7 +8,7 @@ from pages.table_component import CanvasDataTable
 from db_handler import db
 
 class DrawingIssuancePage(ttk.Frame):
-    def __init__(self, parent, username="User", user_id=None):
+    def __init__(self, parent, username="User", user_id=None, on_data_ready=None):
         ttk.Frame.__init__(self, parent)
         self.username = username
         self.user_id = user_id
@@ -25,7 +25,8 @@ class DrawingIssuancePage(ttk.Frame):
             cell_formatters={
                 3: self._format_requested_by,
                 4: self._format_status
-            }
+            },
+            on_data_ready_callback=on_data_ready
         )
         self.table.data_keys = ["id", "no", "rev", "requested_by", "status"]
         self.table.pack(expand=True, fill="both")
@@ -50,20 +51,16 @@ class DrawingIssuancePage(ttk.Frame):
                     r.drawing_id AS no,
                     r.revision AS rev,
                     r.status,
-                    CONCAT(u_req.admin_name, ' at ', DATE_FORMAT(h_req.performed_at, '%d-%m-%Y %H:%i')) AS requested_by,
-                    (SELECT CONCAT(u_iss.admin_name, ' at ', DATE_FORMAT(h_iss.performed_at, '%d-%m-%Y %H:%i'))
-                     FROM drawing_request_history h_iss
-                     JOIN drawing_users u_iss ON h_iss.performed_by = u_iss.id
-                     WHERE h_iss.request_id = r.id AND h_iss.event_type = 'issued'
-                     LIMIT 1) AS issued_info,
-                    (SELECT CONCAT(u_rej.admin_name, ' at ', DATE_FORMAT(h_rej.performed_at, '%d-%m-%Y %H:%i'))
-                     FROM drawing_request_history h_rej
-                     JOIN drawing_users u_rej ON h_rej.performed_by = u_rej.id
-                     WHERE h_rej.request_id = r.id AND h_rej.event_type = 'rejected'
-                     LIMIT 1) AS rejected_info
+                    CONCAT(u_req.admin_name, ' at ', DATE_FORMAT(h_req.performed_at, '%d-%m-%Y %H:%i:%s')) AS requested_by,
+                    CONCAT(u_iss.admin_name, ' at ', DATE_FORMAT(h_iss.performed_at, '%d-%m-%Y %H:%i:%s')) AS issued_info,
+                    CONCAT(u_rej.admin_name, ' at ', DATE_FORMAT(h_rej.performed_at, '%d-%m-%Y %H:%i:%s')) AS rejected_info
                 FROM drawing_requests r
                 JOIN drawing_request_history h_req ON r.id = h_req.request_id AND h_req.event_type = 'requested'
                 JOIN drawing_users u_req ON h_req.performed_by = u_req.id
+                LEFT JOIN drawing_request_history h_iss ON r.id = h_iss.request_id AND h_iss.event_type = 'issued'
+                LEFT JOIN drawing_users u_iss ON h_iss.performed_by = u_iss.id
+                LEFT JOIN drawing_request_history h_rej ON r.id = h_rej.request_id AND h_rej.event_type = 'rejected'
+                LEFT JOIN drawing_users u_rej ON h_rej.performed_by = u_rej.id
                 WHERE r.status IN ('Pending', 'open', 'Issued', 'Rejected', 'Returned')
                 ORDER BY r.id DESC
                 LIMIT 500
@@ -104,8 +101,8 @@ class DrawingIssuancePage(ttk.Frame):
             # Log to history
             insert_history = """
                 INSERT INTO drawing_request_history 
-                (request_id, event_type, performed_by, remarks) 
-                VALUES (%s, 'issued', %s, 'Drawing issued')
+                (request_id, event_type, performed_by) 
+                VALUES (%s, 'issued', %s)
             """
             db.execute_query(insert_history, (request_id, self.user_id or 1))
 
@@ -126,8 +123,8 @@ class DrawingIssuancePage(ttk.Frame):
             # Log to history
             insert_history = """
                 INSERT INTO drawing_request_history 
-                (request_id, event_type, performed_by, remarks) 
-                VALUES (%s, 'rejected', %s, 'Request rejected')
+                (request_id, event_type, performed_by) 
+                VALUES (%s, 'rejected', %s)
             """
             db.execute_query(insert_history, (request_id, self.user_id or 1))
 
@@ -136,5 +133,5 @@ class DrawingIssuancePage(ttk.Frame):
         else:
             messagebox.showerror("Error", "Failed to update status in database.")
 
-    def refresh(self, reset_pagination=True, silent=False):
-        self.table.refresh(reset_pagination=reset_pagination, silent=silent)
+    def refresh(self, reset_pagination=True, silent=False, button_silent=False):
+        self.table.refresh(reset_pagination=reset_pagination, silent=silent, button_silent=button_silent)

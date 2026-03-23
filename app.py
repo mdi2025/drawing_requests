@@ -8,7 +8,8 @@ from pages.drawing_requests import DrawingRequestsPage
 from pages.drawing_issuance import DrawingIssuancePage
 from pages.drawing_return import DrawingReturnPage
 from pages.drawing_receive import DrawingReceivePage
-from pages.placeholders import ReportsPage
+from pages.placeholders import PlaceholderPage
+from pages.reports_page import ReportsPage
 from pages.users_page import UsersPage
 import styles
 
@@ -23,13 +24,14 @@ PAGE_PERMISSIONS = {
 }
 
 class MainApp(ttk.Frame):
-    def __init__(self, parent, username, permissions, user_id, logout_callback):
+    def __init__(self, parent, username, permissions, user_id, logout_callback, initial_data_callback=None):
         ttk.Frame.__init__(self, parent)
         self.parent = parent
         self.username = username
         self.permissions = permissions  # List of page IDs user has access to
         self.user_id = user_id
         self.logout_callback = logout_callback
+        self.initial_data_callback = initial_data_callback
         self.pages = {}
         self.current_page = None
         
@@ -139,18 +141,22 @@ class MainApp(ttk.Frame):
 
         # Get or create page
         if page_key not in self.pages:
+            # Pass the initial data callback only to the very first page created
+            cb = self.initial_data_callback
+            self.initial_data_callback = None # Use only once
+            
             if page_key == "Drawing Requests":
-                self.pages[page_key] = DrawingRequestsPage(self.content_frame, self.username, self.user_id)
+                self.pages[page_key] = DrawingRequestsPage(self.content_frame, self.username, self.user_id, on_data_ready=cb)
             elif page_key == "Drawing Issuance":
-                self.pages[page_key] = DrawingIssuancePage(self.content_frame, self.username, self.user_id)
+                self.pages[page_key] = DrawingIssuancePage(self.content_frame, self.username, self.user_id, on_data_ready=cb)
             elif page_key == "Drawing Return":
-                self.pages[page_key] = DrawingReturnPage(self.content_frame, self.username, self.user_id)
+                self.pages[page_key] = DrawingReturnPage(self.content_frame, self.username, self.user_id, on_data_ready=cb)
             elif page_key == "Drawing Receive":
-                self.pages[page_key] = DrawingReceivePage(self.content_frame, self.username, self.user_id)
+                self.pages[page_key] = DrawingReceivePage(self.content_frame, self.username, self.user_id, on_data_ready=cb)
             elif page_key == "Reports":
-                self.pages[page_key] = ReportsPage(self.content_frame)
+                self.pages[page_key] = ReportsPage(self.content_frame, self.username, self.user_id, on_data_ready=cb)
             elif page_key == "User Management":
-                self.pages[page_key] = UsersPage(self.content_frame)
+                self.pages[page_key] = UsersPage(self.content_frame, on_data_ready=cb)
         
         # Show page first so user sees the layout
         self.current_page = self.pages.get(page_key)
@@ -158,5 +164,6 @@ class MainApp(ttk.Frame):
             self.current_page.pack(fill="both", expand=True, padx=20, pady=20)
             # Refresh data after a small delay to keep UI snappy
             if hasattr(self.current_page, 'refresh'):
-                self.after(50, lambda: self.current_page.refresh(reset_pagination=False, silent=True))
+                # button_silent=True avoids the "Refreshing..." flicker on the button
+                self.after(50, lambda: self.current_page.refresh(reset_pagination=False, silent=False, button_silent=True))
 

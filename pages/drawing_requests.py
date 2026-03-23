@@ -12,7 +12,7 @@ from db_handler import db
 
 class DrawingRequestsPage(ttk.Frame):
 
-    def __init__(self, parent, username="User", user_id=None):
+    def __init__(self, parent, username="User", user_id=None, on_data_ready=None):
         ttk.Frame.__init__(self, parent)
         self.username = username
         self.user_id = user_id
@@ -30,7 +30,8 @@ class DrawingRequestsPage(ttk.Frame):
             cell_formatters={
                 3: self._format_status,
                 4: self._format_requested_by
-            }
+            },
+            on_data_ready_callback=on_data_ready
         )
 
         self.table.data_keys = ["id", "no", "rev", "status", "requested_by"]
@@ -61,11 +62,7 @@ class DrawingRequestsPage(ttk.Frame):
                     m.revision AS rev, 
                     m.approved_status AS status, 
                     m.auto_id AS id,
-                    (SELECT CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i'))
-                     FROM drawing_requests r
-                     JOIN drawing_users u ON r.requested_by = u.id
-                     WHERE r.drawing_id = m.catalog AND r.revision = m.revision
-                     LIMIT 1) AS requested_by
+                    CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i:%s')) AS requested_by
                 FROM master_data_new m
                 JOIN (
                     SELECT catalog, MAX(auto_id) AS max_auto_id
@@ -73,6 +70,8 @@ class DrawingRequestsPage(ttk.Frame):
                     WHERE approved_status = 'approved'
                     GROUP BY catalog
                 ) AS t ON m.catalog = t.catalog AND m.auto_id = t.max_auto_id
+                LEFT JOIN drawing_requests r ON r.drawing_id = m.catalog AND r.revision = m.revision
+                LEFT JOIN drawing_users u ON r.requested_by = u.id
                 ORDER BY m.catalog;
             """
 
@@ -152,13 +151,13 @@ class DrawingRequestsPage(ttk.Frame):
             # Save to drawing_request_history
             insert_history = """
                 INSERT INTO drawing_request_history 
-                (request_id, event_type, performed_by, remarks) 
-                VALUES (%s, 'requested', %s, 'Initial request')
+                (request_id, event_type, performed_by) 
+                VALUES (%s, 'requested', %s)
             """
             db.execute_query(insert_history, (request_id, self.user_id))
 
             # Update local state for instant feedback
-            now_str = datetime.datetime.now().strftime('%d-%m-%Y %H:%M')
+            now_str = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
             drawing["requested_by"] = "%s at %s" % (self.username, now_str)
             self.table._redraw_table()
             
@@ -173,5 +172,5 @@ class DrawingRequestsPage(ttk.Frame):
     # Refresh Table
     # ------------------------------
 
-    def refresh(self, reset_pagination=True, silent=False):
-        self.table.refresh(reset_pagination=reset_pagination, silent=silent)
+    def refresh(self, reset_pagination=True, silent=False, button_silent=False):
+        self.table.refresh(reset_pagination=reset_pagination, silent=silent, button_silent=button_silent)

@@ -8,7 +8,7 @@ from pages.table_component import CanvasDataTable
 from db_handler import db
 
 class DrawingReceivePage(ttk.Frame):
-    def __init__(self, parent, username="User", user_id=None):
+    def __init__(self, parent, username="User", user_id=None, on_data_ready=None):
         ttk.Frame.__init__(self, parent)
         self.username = username
         self.user_id = user_id
@@ -25,7 +25,8 @@ class DrawingReceivePage(ttk.Frame):
             cell_formatters={
                 3: self._format_status,
                 4: self._format_returned_by
-            }
+            },
+            on_data_ready_callback=on_data_ready
         )
         self.table.data_keys = ["id", "no", "rev", "status", "returned_by", "return_date"]
         self.table.pack(expand=True, fill="both")
@@ -46,8 +47,8 @@ class DrawingReceivePage(ttk.Frame):
                     r.revision AS rev,
                     r.status,
                     u.admin_name AS returned_by,
-                    DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i') AS return_date,
-                    (SELECT CONCAT(u_rec.admin_name, ' at ', DATE_FORMAT(h_rec.performed_at, '%d-%m-%Y %H:%i'))
+                    DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i:%s') AS return_date,
+                    (SELECT CONCAT(u_rec.admin_name, ' at ', DATE_FORMAT(h_rec.performed_at, '%d-%m-%Y %H:%i:%s'))
                      FROM drawing_request_history h_rec
                      JOIN drawing_users u_rec ON h_rec.performed_by = u_rec.id
                      WHERE h_rec.request_id = r.id AND h_rec.event_type = 'received'
@@ -85,8 +86,8 @@ class DrawingReceivePage(ttk.Frame):
         # Log to history BEFORE deleting the request
         insert_history = """
             INSERT INTO drawing_request_history 
-            (request_id, event_type, performed_by, remarks) 
-            VALUES (%s, 'received', %s, 'Drawing received')
+            (request_id, event_type, performed_by) 
+            VALUES (%s, 'received', %s)
         """
         db.execute_query(insert_history, (request_id, self.user_id or 1))
 
@@ -98,5 +99,5 @@ class DrawingReceivePage(ttk.Frame):
         else:
             messagebox.showerror("Error", "Failed to receive drawing from database.")
 
-    def refresh(self, reset_pagination=True, silent=False):
-        self.table.refresh(reset_pagination=reset_pagination, silent=silent)
+    def refresh(self, reset_pagination=True, silent=False, button_silent=False):
+        self.table.refresh(reset_pagination=reset_pagination, silent=silent, button_silent=button_silent)

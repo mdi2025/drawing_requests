@@ -8,7 +8,7 @@ from pages.table_component import CanvasDataTable
 from db_handler import db
 
 class DrawingReturnPage(ttk.Frame):
-    def __init__(self, parent, username="User", user_id=None):
+    def __init__(self, parent, username="User", user_id=None, on_data_ready=None):
         ttk.Frame.__init__(self, parent)
         self.username = username
         self.user_id = user_id
@@ -24,7 +24,8 @@ class DrawingReturnPage(ttk.Frame):
             search_keys=["no", "rev", "status"],
             cell_formatters={
                 3: self._format_status
-            }
+            },
+            on_data_ready_callback=on_data_ready
         )
         self.table.data_keys = ["id", "no", "rev", "status", "issue_date"]
         self.table.pack(expand=True, fill="both")
@@ -44,8 +45,8 @@ class DrawingReturnPage(ttk.Frame):
                     r.drawing_id AS no,
                     r.revision AS rev,
                     r.status,
-                    DATE_FORMAT(h_iss.performed_at, '%%d-%%m-%%Y %%H:%%i') AS issue_date,
-                    (SELECT CONCAT(u_ret.admin_name, ' at ', DATE_FORMAT(h_ret.performed_at, '%%d-%%m-%%Y %%H:%%i'))
+                    DATE_FORMAT(h_iss.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s') AS issue_date,
+                    (SELECT CONCAT(u_ret.admin_name, ' at ', DATE_FORMAT(h_ret.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s'))
                      FROM drawing_request_history h_ret
                      JOIN drawing_users u_ret ON h_ret.performed_by = u_ret.id
                      WHERE h_ret.request_id = r.id AND h_ret.event_type = 'returned'
@@ -85,8 +86,8 @@ class DrawingReturnPage(ttk.Frame):
             # Log to history
             insert_history = """
                 INSERT INTO drawing_request_history 
-                (request_id, event_type, performed_by, remarks) 
-                VALUES (%s, 'returned', %s, 'Drawing returned')
+                (request_id, event_type, performed_by) 
+                VALUES (%s, 'returned', %s)
             """
             db.execute_query(insert_history, (request_id, self.user_id or 1))
 
@@ -95,5 +96,5 @@ class DrawingReturnPage(ttk.Frame):
         else:
             messagebox.showerror("Error", "Failed to update return status in database.")
 
-    def refresh(self, reset_pagination=True, silent=False):
-        self.table.refresh(reset_pagination=reset_pagination, silent=silent)
+    def refresh(self, reset_pagination=True, silent=False, button_silent=False):
+        self.table.refresh(reset_pagination=reset_pagination, silent=silent, button_silent=button_silent)

@@ -38,8 +38,9 @@ class CanvasDataTable(ttk.Frame):
                  get_action_buttons_func=None,
                  search_placeholder="Search records...",
                  search_keys=None,
-                 cell_formatters=None,
-                 data_keys=None):
+                  cell_formatters=None,
+                  data_keys=None,
+                  on_data_ready_callback=None):
         
         ttk.Frame.__init__(self, parent, style="Card.TFrame", padding=25)
         
@@ -63,6 +64,7 @@ class CanvasDataTable(ttk.Frame):
         self.search_placeholder = search_placeholder
         self.search_keys = search_keys or []
         self.cell_formatters = cell_formatters or {} # col_idx -> func
+        self.on_data_ready_callback = on_data_ready_callback
         
         self.data = []
         self.filtered = []
@@ -76,14 +78,30 @@ class CanvasDataTable(ttk.Frame):
         self.data_keys = data_keys or []
         
         self._build_ui()
-        self.update_idletasks()
-        self._stretch_last_column()
+        # Remove update_idletasks() as it blocks the main thread during instantiation.
+        # Defer stretching to when the widget is actually mapped and has a width.
+        self.after(10, self._stretch_after_map)
+
+    def _stretch_after_map(self):
+        """Helper to stretch columns after the widget has been mapped/sized."""
+        if self.winfo_width() > 1:
+            self._stretch_last_column()
+            self._redraw_table()
+        else:
+            # Re-schedule if still not mapped
+            self.after(100, self._stretch_after_map)
 
     def _stretch_last_column(self):
+        self.update_idletasks() # Ensure dimensions are current
         fixed = sum(self.col_widths[:-1])
         canvas_w = self.canvas.winfo_width()
-        min_last = 150
-        if canvas_w > fixed + 40:
+        
+        # Fallback if canvas_w is still not yet determined
+        if canvas_w <= 1:
+            canvas_w = self.winfo_width() - 50 
+            
+        min_last = 160 # slightly more space for action buttons
+        if canvas_w > fixed + 10:
             self.col_widths[-1] = max(min_last, canvas_w - fixed)
         else:
             self.col_widths[-1] = min_last
@@ -114,7 +132,7 @@ class CanvasDataTable(ttk.Frame):
         self.search_entry.bind("<FocusOut>", self._restore_placeholder)
         self.search_var.trace("w", self._search_data)
 
-        self.loading_label = ttk.Label(self, text="Loading data...",
+        self.loading_label = ttk.Label(self, text="Loading ....",
                                        font=("Segoe UI", 12), foreground=styles.SECONDARY)
 
         table_frame = tk.Frame(self, bg="white", relief="solid", bd=1)
@@ -173,6 +191,15 @@ class CanvasDataTable(ttk.Frame):
         self.copy_feedback_id = None
 
     def _on_canvas_configure(self, event):
+        # Use event dimensions if possible for immediate measurement
+        # Debounce the resize event to prevent rapid redraws
+        if hasattr(self, '_resize_timer') and self._resize_timer:
+            self.after_cancel(self._resize_timer)
+        # Reduced debounce to 50ms for snappier response
+        self._resize_timer = self.after(50, self._do_resize)
+
+    def _do_resize(self):
+        self._resize_timer = None
         self._stretch_last_column()
         self._redraw_table()
 
@@ -216,42 +243,47 @@ class CanvasDataTable(ttk.Frame):
         except:
             pass
 
-    def refresh(self, reset_pagination=True, silent=False):
+    def refresh(self, reset_pagination=True, silent=False, button_silent=False):
         if self.is_loading: return
         self.is_loading = True
         
         # Subtle loading state only if not silent
         if not silent:
-            self.refresh_btn.config(state="disabled", text="Refreshing...")
+            if not button_silent:
+                self.refresh_btn.config(state="disabled", text="Refreshing...")
             
-            # Show prominent loading only on initial load (empty data)
-            if not self.data:
-                self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
+            # Show prominent loading label
+            self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
             
-        thread = threading.Thread(target=self._load_data_thread, args=(reset_pagination, silent), daemon=True)
+        thread = threading.Thread(target=self._load_data_thread, args=(reset_pagination, silent, button_silent), daemon=True)
         if reset_pagination:
             self.canvas.yview_moveto(0)
         thread.start()
 
-    def _load_data_thread(self, reset_pagination=True, silent=False):
+    def _load_data_thread(self, reset_pagination=True, silent=False, button_silent=False):
         try:
             if self.fetch_data_func:
                 data = self.fetch_data_func()
-                self.after(0, lambda: self._on_data_ready(data, reset_pagination, silent))
+                self.after(0, lambda: self._on_data_ready(data, reset_pagination, silent, button_silent))
             else:
-                self.after(0, lambda: self._on_data_ready([], reset_pagination, silent))
+                self.after(0, lambda: self._on_data_ready([], reset_pagination, silent, button_silent))
         except Exception as e:
             print("Error in fetch thread: {}".format(e))
             self.after(0, lambda: self.refresh_btn.config(state="normal", text="Refresh"))
             self.is_loading = False
 
-    def _on_data_ready(self, data, reset_pagination=True, silent=False):
+    def _on_data_ready(self, data, reset_pagination=True, silent=False, button_silent=False):
         self.data = data
         self.is_loading = False
-        if not silent:
+        if not silent and not button_silent:
             self.refresh_btn.config(state="normal", text="Refresh")
         self.loading_label.place_forget()
         self._apply_search(reset_pagination)
+        
+        # Notify callback if this is the first time we got data
+        if self.on_data_ready_callback:
+            self.on_data_ready_callback()
+            self.on_data_ready_callback = None # Only once
 
     def _apply_search(self, reset_pagination=True):
         query = self.search_var.get().lower().strip()
@@ -296,9 +328,12 @@ class CanvasDataTable(ttk.Frame):
         return str(text)
 
     def _redraw_table(self):
-        self.canvas.delete("all")
-        self.hover_row = -1
-        self.hover_button = -1
+        # Instead of delete("all"), we use tags to redraw and then delete old items
+        # This prevents the "white flash" (flicker) during redraw.
+        self.canvas.addtag_all("old_content")
+        
+        # Don't reset hover_row/button here if we want to preserve state during scroll
+        # but for redraw (re-pagination), it's safer to reset or re-check.
 
         header_height = 38
         row_start = self.current_page * self.page_size
@@ -354,7 +389,7 @@ class CanvasDataTable(ttk.Frame):
                 w = self.col_widths[col_idx]
                 self.canvas.create_rectangle(x, y, x + w, y + self.row_height,
                                             fill=row_bg, outline="#e2e8f0", width=1,
-                                            tags=("row%d" % global_idx, "cell"))
+                                            tags=("row%d" % global_idx, "row-bg-%d" % global_idx, "cell"))
                 
                 # Get value - use serial number if this is the S.No column
                 raw_val = ""
@@ -395,31 +430,68 @@ class CanvasDataTable(ttk.Frame):
 
             # Action Column
             w = self.col_widths[-1]
-            self.canvas.create_rectangle(x, y, x + w, y + self.row_height,
-                                        fill="#f9fafb", outline="#e2e8f0", width=1,
-                                        tags=("row%d" % global_idx,))
+            # Draw a slightly wider background to prevent white gaps during resize
+            bg_w = max(w, self.canvas.winfo_width() - x)
+            # Use 'action-bg' tag for full row hover effect
+            action_row_bg = "#f9fafb" if global_idx != self.hover_row else "#e0f2fe"
+            self.canvas.create_rectangle(x, y, x + bg_w, y + self.row_height,
+                                        fill=action_row_bg, outline="#e2e8f0", width=1,
+                                        tags=("row%d" % global_idx, "action-bg-%d" % global_idx))
             
             if self.get_action_buttons_func:
                 buttons = self.get_action_buttons_func(d)
-                if isinstance(buttons, list):
+                if isinstance(buttons, list) and buttons:
                     btn_count = len(buttons)
-                    # Standard width for buttons now
-                    btn_width = 85 if btn_count > 1 else 100
-                    total_btn_width = (btn_width * btn_count) + (10 * (btn_count - 1))
-                    start_x = x + (w - total_btn_width) // 2
+                    gap = 8
+                    # Standardized button width
+                    btn_width = 85 if btn_count > 1 else 115
+                    
+                    # Available width for buttons (leave some padding)
+                    available_w = w - 12
+                    total_required = (btn_width * btn_count) + (gap * (btn_count - 1))
+                    
+                    # Scale down btn_width if it exceeds available space
+                    if total_required > available_w:
+                        btn_width = (available_w - (gap * (btn_count - 1))) // btn_count
+                        btn_width = max(btn_width, 35)
+                        total_required = (btn_width * btn_count) + (gap * (btn_count - 1))
+                    
+                    # Center the button group in the column width 'w'
+                    start_x = x + (w - total_required) // 2
+                    # Ensure it doesn't peek into the previous column
+                    start_x = max(x + 4, start_x)
                     
                     btn_x = start_x
-                    btn_y = y + 8
+                    btn_y = y + 7
                     for btn_idx, (text, bg, fg_color, cb) in enumerate(buttons):
+                        # Cap at column end
+                        if btn_x >= x + w - 4: break
+                        
+                        draw_w = btn_width
+                        if btn_x + draw_w > x + w - 4:
+                            draw_w = (x + w - 4) - btn_x
+                        
+                        if draw_w < 10: break
+                            
                         hovered = (global_idx == self.hover_row and btn_idx == self.hover_button)
-                        tags = ("action-btn-%d-%d" % (global_idx, btn_idx), "row%d" % global_idx)
-                        self.canvas.create_rectangle(btn_x, btn_y, btn_x + btn_width, btn_y + self.row_height - 16,
-                                                    fill=bg, outline="#1d4ed8" if hovered else "#d1d5db",
-                                                    width=2 if hovered else 1, tags=tags)
-                        self.canvas.create_text(btn_x + btn_width//2, btn_y + (self.row_height-16)//2,
-                                               text=text, fill=fg_color,
-                                               font=("Segoe UI", 9, "bold"), anchor="center", tags=tags)
-                        btn_x += btn_width + 10
+                        btn_tags = ("action-btn-%d-%d" % (global_idx, btn_idx), "row%d" % global_idx)
+                        r_tag = "btn-rect-%d-%d" % (global_idx, btn_idx)
+                        
+                        # Use slightly rounded corners or just ensure sharp placement
+                        self.canvas.create_rectangle(btn_x, btn_y, btn_x + draw_w, btn_y + self.row_height - 14,
+                                                    fill=bg, outline="#2563eb" if hovered else "#d1d5db",
+                                                    width=2 if hovered else 1, 
+                                                    tags=btn_tags + (r_tag,))
+                        
+                        if draw_w > 20:
+                            # Truncate text for the button width
+                            btn_text = self._truncate_text(text, draw_w + 12)
+                            self.canvas.create_text(btn_x + draw_w//2, btn_y + (self.row_height-14)//2,
+                                                   text=btn_text, fill=fg_color,
+                                                   font=("Segoe UI", 8, "bold"), anchor="center", 
+                                                   tags=btn_tags + ("btn-text-%d-%d" % (global_idx, btn_idx),))
+                        
+                        btn_x += draw_w + gap
                 elif isinstance(buttons, tuple) or isinstance(buttons, str):
                     # Show as label
                     display_val = buttons
@@ -452,6 +524,9 @@ class CanvasDataTable(ttk.Frame):
         end = min(row_start + self.page_size, total)
         self.page_label.config(text="Page %d of %d" % (curr, total_pages))
         self.records_label.config(text="Showing %d–%d of %d records" % (start, end, total))
+        
+        # Finally delete old items after drawing new ones - this is the flicker patch
+        self.canvas.delete("old_content")
 
     def _on_canvas_motion(self, event):
         cx = self.canvas.canvasx(event.x)
@@ -464,7 +539,7 @@ class CanvasDataTable(ttk.Frame):
             if sep_idx != -1:
                 over_separator = True
 
-        items = self.canvas.find_overlapping(cx-10, cy-10, cx+10, cy+10)
+        items = self.canvas.find_overlapping(cx-5, cy-5, cx+5, cy+5)
 
         new_row = -1
         new_btn = -1
@@ -472,19 +547,27 @@ class CanvasDataTable(ttk.Frame):
         for item in items:
             tags = self.canvas.gettags(item)
             for tag in tags:
-                if tag.startswith("row"):
-                    new_row = int(tag[3:])
+                if tag.startswith("row") and not tag.startswith("row-bg"):
+                    try: new_row = int(tag[3:])
+                    except: pass
                 if tag.startswith("action-btn-"):
                     parts = tag.split("-")
                     new_row = int(parts[2])
                     new_btn = int(parts[3])
 
-        redraw_needed = (new_row != self.hover_row or new_btn != self.hover_button)
-        
-        if redraw_needed:
+        if new_row != self.hover_row or new_btn != self.hover_button:
+            old_row = self.hover_row
+            old_btn = self.hover_button
+            
             self.hover_row = new_row
             self.hover_button = new_btn
-            self._redraw_table()
+            
+            # Fast update: only change colors of affected tags
+            if old_row != -1: self._update_row_highlight(old_row, False)
+            if new_row != -1: self._update_row_highlight(new_row, True)
+            
+            if old_btn != -1: self._update_btn_highlight(old_row, old_btn, False)
+            if new_btn != -1: self._update_btn_highlight(new_row, new_btn, True)
 
         if new_btn != -1:
             self.canvas.config(cursor="hand2")
@@ -492,6 +575,27 @@ class CanvasDataTable(ttk.Frame):
             self.canvas.config(cursor="sb_h_double_arrow")
         else:
             self.canvas.config(cursor="")
+
+    def _update_row_highlight(self, row_idx, is_hovered):
+        # Calculate original background for normal cells
+        local_idx = row_idx % self.page_size
+        is_even = local_idx % 2 == 0
+        bg = "#e0f2fe" if is_hovered else ("#ffffff" if is_even else "#f8fafc")
+        self.canvas.itemconfigure("row-bg-%d" % row_idx, fill=bg)
+        
+        # Also highlight action column background
+        action_bg = "#e0f2fe" if is_hovered else "#f9fafb"
+        self.canvas.itemconfigure("action-bg-%d" % row_idx, fill=action_bg)
+
+    def _update_btn_highlight(self, row_idx, btn_idx, is_hovered):
+        # Target only the rectangle tag, not the text item
+        outline = "#2563eb" if is_hovered else "#d1d5db"
+        width = 2 if is_hovered else 1
+        try:
+            self.canvas.itemconfigure("btn-rect-%d-%d" % (row_idx, btn_idx), outline=outline, width=width)
+        except tk.TclError:
+            # Fallback in case of tag mismatch during redraw
+            pass
 
     def _get_column_boundary(self, cx):
         x = 0
@@ -504,10 +608,12 @@ class CanvasDataTable(ttk.Frame):
 
     def _on_canvas_leave(self, event):
         if self.dragging_col == -1:
+            # Targeted clear of highlights instead of full redraw
+            if self.hover_row != -1: self._update_row_highlight(self.hover_row, False)
+            if self.hover_button != -1: self._update_btn_highlight(self.hover_row, self.hover_button, False)
             self.hover_row = -1
             self.hover_button = -1
             self.canvas.config(cursor="")
-            self._redraw_table()
 
     def _on_canvas_click(self, event):
         cx = self.canvas.canvasx(event.x)

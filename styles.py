@@ -105,30 +105,33 @@ class RoundedButton(tk.Canvas):
 
     def _draw(self, color):
         self.delete("all")
+        
         r = self.radius
         w = self.width
         h = self.height
         
         # Corners
-        self.create_arc((0, 0, 2*r, 2*r), start=90, extent=90, fill=color, outline=color)
-        self.create_arc((w-2*r, 0, w, 2*r), start=0, extent=90, fill=color, outline=color)
-        self.create_arc((w-2*r, h-2*r, w, h), start=270, extent=90, fill=color, outline=color)
-        self.create_arc((0, h-2*r, 2*r, h), start=180, extent=90, fill=color, outline=color)
+        self.create_arc((0, 0, 2*r, 2*r), start=90, extent=90, fill=color, outline=color, tags="btn_bg")
+        self.create_arc((w-2*r, 0, w, 2*r), start=0, extent=90, fill=color, outline=color, tags="btn_bg")
+        self.create_arc((w-2*r, h-2*r, w, h), start=270, extent=90, fill=color, outline=color, tags="btn_bg")
+        self.create_arc((0, h-2*r, 2*r, h), start=180, extent=90, fill=color, outline=color, tags="btn_bg")
         
         # Rectangles
-        self.create_rectangle((r, 0, w-r, h), fill=color, outline=color)
-        self.create_rectangle((0, r, w, h-r), fill=color, outline=color)
+        self.create_rectangle((r, 0, w-r, h), fill=color, outline=color, tags="btn_bg")
+        self.create_rectangle((0, r, w, h-r), fill=color, outline=color, tags="btn_bg")
         
         # Text
         self.create_text(w/2, h/2, text=self.text, fill=self.fg, 
-                         font=("Segoe UI", 10, "bold"))
+                         font=("Segoe UI", 10, "bold"), tags="btn_text")
 
     def _on_enter(self, e):
-        self._draw(self.hover_bg)
+        # Prevent flicker by only changing colors
+        self.itemconfigure("btn_bg", fill=self.hover_bg, outline=self.hover_bg)
         self.config(cursor="hand2")
 
     def _on_leave(self, e):
-        self._draw(self.btn_bg)
+        # Prevent flicker by only changing colors
+        self.itemconfigure("btn_bg", fill=self.btn_bg, outline=self.btn_bg)
 
     def _on_click(self, e):
         if self.command:

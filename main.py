@@ -37,34 +37,20 @@ class LoaderFrame(tk.Frame):
         ).pack()
         
     def start_animation(self):
-        """Start the circular loader animation."""
-        self.animation_running = True
-        self._animate()
-        
-    def stop_animation(self):
-        """Stop the circular loader animation."""
-        self.animation_running = False
-        
-    def _animate(self):
-        """Animate the circular loader."""
-        if not self.animation_running:
-            return
-            
+        """Show the loader (static version for minimum flickering)."""
         self.canvas.delete("all")
-        
-        # Center points and radius
         cx, cy = 40, 40
         r = 30
+        # Draw a static circle instead of an animating arc
+        self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline=styles.PRIMARY, width=4)
         
-        # Draw circular arc
-        self.canvas.create_arc(
-            cx - r, cy - r, cx + r, cy + r,
-            start=self.angle, extent=280,
-            outline=styles.PRIMARY, width=4, style="arc"
-        )
+    def stop_animation(self):
+        """Stop the loader."""
+        pass
         
-        self.angle = (self.angle + 12) % 360
-        self.after(16, self._animate)
+    def _animate(self):
+        """Removed for minimum animation and flickering."""
+        pass
 
 class LoginFrame(tk.Frame):
     def __init__(self, parent, on_login_success):
@@ -186,17 +172,20 @@ class DrawingSystemApp:
         self.root.after(10, lambda: self._finish_loading(username, permissions, user_id))
     
     def _finish_loading(self, username, permissions, user_id):
-        """Complete the app loading process on the main thread."""
+        """Initiate the main app but keep loader visible."""
         if self.main_app:
             self.main_app.destroy()
         
-        # Create and show main app immediately
-        self.main_app = MainApp(self.root, username, permissions, user_id, self.logout)
+        # Create main app and pass a callback to hide the loader when data is ready
+        self.main_app = MainApp(self.root, username, permissions, user_id, self.logout,
+                                initial_data_callback=self._on_app_ready)
         
-        # Hide loader and show main app
+    def _on_app_ready(self):
+        """Called when the first page has successfully fetched its initial data."""
         self.loader_frame.stop_animation()
         self.loader_frame.pack_forget()
-        self.main_app.pack(expand=True, fill="both")
+        if self.main_app:
+            self.main_app.pack(expand=True, fill="both")
 
     def logout(self):
         if self.main_app:

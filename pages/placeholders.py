@@ -16,7 +16,3 @@ class IssuancePage(PlaceholderPage):
 class ReturnPage(PlaceholderPage):
     def __init__(self, parent):
         PlaceholderPage.__init__(self, parent, "Return Page")
-
-class ReportsPage(PlaceholderPage):
-    def __init__(self, parent):
-        PlaceholderPage.__init__(self, parent, "Reports Page")
