@@ -1,17 +1,57 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
+from datetime import datetime
+import zipfile
+import xml.etree.ElementTree as ET
+import xml.sax.saxutils as saxutils
+
 import styles
 from pages.table_component import CanvasDataTable
 from db_handler import db
 
+
 class ReportsPage(ttk.Frame):
     def __init__(self, parent, username="User", user_id=None, on_data_ready=None):
         ttk.Frame.__init__(self, parent)
-        self.username = username
-        self.user_id = user_id
-        
+
+        self._cal_canvas = None
+
+        # ================= DATE FILTER =================
+        filter_frame = tk.Frame(self, bg="white")
+        filter_frame.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(filter_frame, text="From:", bg="white").pack(side="left", padx=5)
+        self.from_date_var = tk.StringVar()
+        self.from_entry = tk.Entry(
+            filter_frame, textvariable=self.from_date_var, width=12
+        )
+        self.from_entry.pack(side="left")
+        self.from_entry.bind(
+            "<Button-1>",
+            lambda e: self._show_calendar(self.from_entry, self.from_date_var),
+        )
+
+        tk.Label(filter_frame, text="To:", bg="white").pack(side="left", padx=5)
+        self.to_date_var = tk.StringVar()
+        self.to_entry = tk.Entry(filter_frame, textvariable=self.to_date_var, width=12)
+        self.to_entry.pack(side="left")
+        self.to_entry.bind(
+            "<Button-1>", lambda e: self._show_calendar(self.to_entry, self.to_date_var)
+        )
+
+        ttk.Button(filter_frame, text="Apply Filter", command=self.refresh).pack(
+            side="left", padx=10
+        )
+
+        # ================= EXPORT =================
+        ttk.Button(self, text="Export Excel (.xlsx)", command=self._export_xlsx).pack(
+            anchor="e", padx=10, pady=5
+        )
+
+        # ================= TABLE =================
         self.table = CanvasDataTable(
             self,
             title="Drawing Lifecycle Report",
@@ -20,78 +60,392 @@ class ReportsPage(ttk.Frame):
             fetch_data_func=self._fetch_report_data,
             get_action_buttons_func=self._get_actions,
             search_placeholder="Search records / history...",
-            search_keys=["no", "rev", "status", "req_info", "iss_info", "ret_info", "rec_info", "rej_info"],
-            cell_formatters={
-                3: self._format_status,
-                4: self._format_info
-            },
-            on_data_ready_callback=on_data_ready
+            search_keys=[
+                "no",
+                "rev",
+                "status",
+                "req_info",
+                "iss_info",
+                "ret_info",
+                "rec_info",
+                "rej_info",
+            ],
+            cell_formatters={3: self._format_status, 4: self._format_info},
+            on_data_ready_callback=on_data_ready,
         )
+
         self.table.data_keys = ["id", "no", "rev", "status", "iss_info"]
         self.table.pack(expand=True, fill="both")
-        self.pack_propagate(False)
 
-    def _format_status(self, val, record):
-        s = str(val).lower()
-        color = "#1f2937"
-        if s == "rejected": color = "#ef4444"
-        elif s == "issued": color = "#008000"
-        elif s == "returned": color = "#4f46e5"
-        elif s == "received": color = "#10b981"
-        return str(val).upper(), color, ("Segoe UI", 9, "bold"), "center"
+    # ================= FAST CANVAS CALENDAR =================
+    def _show_calendar(self, widget, target_var):
+        import calendar
 
-    def _format_info(self, val, record):
-        if not val or val == "—":
-            return "—", "#94a3b8", ("Segoe UI", 9), "w"
-        return val, "#1f2937", ("Segoe UI", 9), "w"
+        if self._cal_canvas:
+            self._cal_canvas.destroy()
 
+        self._cal_canvas = tk.Canvas(
+            self, width=220, height=220, bg="white", highlightthickness=1
+        )
+
+        x = widget.winfo_rootx() - self.winfo_rootx()
+        y = widget.winfo_rooty() - self.winfo_rooty() + widget.winfo_height()
+        self._cal_canvas.place(x=x, y=y)
+
+        now = datetime.now()
+        self.cal_year = now.year
+        self.cal_month = now.month
+
+        self.cell_map = {}
+
+        def draw():
+            self._cal_canvas.delete("all")
+            self.cell_map.clear()
+
+            title = "%s %d" % (calendar.month_name[self.cal_month], self.cal_year)
+            self._cal_canvas.create_text(
+                110, 15, text=title, font=("Segoe UI", 10, "bold")
+            )
+
+            # arrows
+            self._cal_canvas.create_text(
+                20, 15, text="<", font=("Segoe UI", 10, "bold")
+            )
+            self._cal_canvas.create_text(
+                200, 15, text=">", font=("Segoe UI", 10, "bold")
+            )
+
+            days = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+            for i, d in enumerate(days):
+                self._cal_canvas.create_text(20 + i * 30, 40, text=d)
+
+            cal = calendar.monthcalendar(self.cal_year, self.cal_month)
+
+            y = 60
+            for week in cal:
+                x = 10
+                for d in week:
+                    if d != 0:
+                        rect = self._cal_canvas.create_rectangle(
+                            x, y, x + 25, y + 25, fill="#f1f5f9"
+                        )
+                        txt = self._cal_canvas.create_text(x + 12, y + 12, text=str(d))
+                        self.cell_map[(rect, txt)] = d
+                    x += 30
+                y += 30
+
+        def click(event):
+            x, y = event.x, event.y
+
+            # prev
+            if 10 < x < 30 and 5 < y < 25:
+                self.cal_month -= 1
+                if self.cal_month == 0:
+                    self.cal_month = 12
+                    self.cal_year -= 1
+                draw()
+                return
+
+            # next
+            if 190 < x < 210 and 5 < y < 25:
+                self.cal_month += 1
+                if self.cal_month == 13:
+                    self.cal_month = 1
+                    self.cal_year += 1
+                draw()
+                return
+
+            items = self._cal_canvas.find_overlapping(x, y, x, y)
+            for item in items:
+                for (rect, txt), day in self.cell_map.items():
+                    if item == rect or item == txt:
+                        target_var.set(
+                            "%04d-%02d-%02d" % (self.cal_year, self.cal_month, day)
+                        )
+                        self._cal_canvas.destroy()
+                        self._cal_canvas = None
+                        return
+
+        self._cal_canvas.bind("<Button-1>", click)
+        draw()
+
+    # ================= EXPORT =================
+    def _export_xlsx(self):
+        try:
+            path = filedialog.asksaveasfilename(defaultextension=".xlsx")
+            if not path:
+                return
+
+            data = self._fetch_report_data()
+
+            # Helper to create a cell
+            def create_cell(val, r, c):
+                el = ET.Element("c", {"r": "%s%d" % (c, r), "t": "inlineStr"})
+                is_el = ET.SubElement(el, "is")
+                t = ET.SubElement(is_el, "t")
+                t.text = saxutils.escape(str(val) if val is not None else "")
+                return el
+
+            # ---------------- Sheet ----------------
+            worksheet = ET.Element(
+                "worksheet",
+                {"xmlns": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"},
+            )
+            sheetData = ET.SubElement(worksheet, "sheetData")
+
+            headers = [
+                "SNo",
+                "Drawing ID",
+                "Rev",
+                "Status",
+                "Requested",
+                "Issued",
+                "Returned",
+                "Received",
+                "Rejected",
+            ]
+
+            row = ET.SubElement(sheetData, "row", {"r": "1"})
+            for i, h in enumerate(headers):
+                row.append(create_cell(h, 1, chr(65 + i)))
+
+            for idx, rdata in enumerate(data, 2):
+                row = ET.SubElement(sheetData, "row", {"r": str(idx)})
+                vals = [
+                    idx - 1,
+                    rdata.get("no"),
+                    rdata.get("rev"),
+                    rdata.get("status"),
+                    rdata.get("req_info"),
+                    rdata.get("iss_info"),
+                    rdata.get("ret_info"),
+                    rdata.get("rec_info"),
+                    rdata.get("rej_info"),
+                ]
+                for i, v in enumerate(vals):
+                    row.append(create_cell(v, idx, chr(65 + i)))
+
+            sheet_xml = b'<?xml version="1.0" encoding="UTF-8"?>' + ET.tostring(
+                worksheet
+            )
+
+            # ---------------- Workbook ----------------
+            workbook = ET.Element(
+                "workbook",
+                {
+                    "xmlns": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+                    "xmlns:r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                },
+            )
+            sheets = ET.SubElement(workbook, "sheets")
+            ET.SubElement(
+                sheets, "sheet", {"name": "Sheet1", "sheetId": "1", "r:id": "rId1"}
+            )
+            workbook_xml = b'<?xml version="1.0" encoding="UTF-8"?>' + ET.tostring(
+                workbook
+            )
+
+            # ---------------- Content Types ----------------
+            content_types = ET.Element(
+                "Types",
+                {
+                    "xmlns": "http://schemas.openxmlformats.org/package/2006/content-types"
+                },
+            )
+            ET.SubElement(
+                content_types,
+                "Default",
+                {
+                    "Extension": "rels",
+                    "ContentType": "application/vnd.openxmlformats-package.relationships+xml",
+                },
+            )
+            ET.SubElement(
+                content_types,
+                "Default",
+                {"Extension": "xml", "ContentType": "application/xml"},
+            )
+            ET.SubElement(
+                content_types,
+                "Override",
+                {
+                    "PartName": "/xl/workbook.xml",
+                    "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+                },
+            )
+            ET.SubElement(
+                content_types,
+                "Override",
+                {
+                    "PartName": "/xl/worksheets/sheet1.xml",
+                    "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
+                },
+            )
+            content_types_xml = b'<?xml version="1.0" encoding="UTF-8"?>' + ET.tostring(
+                content_types
+            )
+
+            # ---------------- Relationships ----------------
+            rels = ET.Element(
+                "Relationships",
+                {
+                    "xmlns": "http://schemas.openxmlformats.org/package/2006/relationships"
+                },
+            )
+            ET.SubElement(
+                rels,
+                "Relationship",
+                {
+                    "Id": "rId1",
+                    "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+                    "Target": "xl/workbook.xml",
+                },
+            )
+            rels_xml = b'<?xml version="1.0" encoding="UTF-8"?>' + ET.tostring(rels)
+
+            workbook_rels = ET.Element(
+                "Relationships",
+                {
+                    "xmlns": "http://schemas.openxmlformats.org/package/2006/relationships"
+                },
+            )
+            ET.SubElement(
+                workbook_rels,
+                "Relationship",
+                {
+                    "Id": "rId1",
+                    "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet",
+                    "Target": "worksheets/sheet1.xml",
+                },
+            )
+            workbook_rels_xml = b'<?xml version="1.0" encoding="UTF-8"?>' + ET.tostring(
+                workbook_rels
+            )
+
+            # ---------------- CREATE ZIP ----------------
+            z = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED)
+            z.writestr("[Content_Types].xml", content_types_xml)
+            z.writestr("_rels/.rels", rels_xml)
+            z.writestr("xl/workbook.xml", workbook_xml)
+            z.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+            z.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+            z.close()
+
+            messagebox.showinfo("Success", "Excel exported successfully!")
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    # ================= DATA =================
     def _fetch_report_data(self):
         try:
-            # Comprehensive query to get all stages of the lifecycle
+            f = self.from_date_var.get()
+            t = self.to_date_var.get()
+
+            date_filter = ""
+            if f and t:
+                date_filter = "WHERE DATE(h_req.performed_at) BETWEEN '%s' AND '%s'" % (
+                    f,
+                    t,
+                )
+
             query = """
                 SELECT 
                     r.id,
                     r.drawing_id AS no,
                     r.revision AS rev,
                     r.status,
-                    CONCAT(u_req.admin_name, ' at ', DATE_FORMAT(h_req.performed_at, '%d-%m-%Y %H:%i')) AS req_info,
-                    COALESCE(CONCAT(u_iss.admin_name, ' at ', DATE_FORMAT(h_iss.performed_at, '%d-%m-%Y %H:%i')), '—') AS iss_info,
-                    COALESCE(CONCAT(u_ret.admin_name, ' at ', DATE_FORMAT(h_ret.performed_at, '%d-%m-%Y %H:%i')), '—') AS ret_info,
-                    COALESCE(CONCAT(u_rec.admin_name, ' at ', DATE_FORMAT(h_rec.performed_at, '%d-%m-%Y %H:%i')), '—') AS rec_info,
-                    COALESCE(CONCAT(u_rej.admin_name, ' at ', DATE_FORMAT(h_rej.performed_at, '%d-%m-%Y %H:%i')), '—') AS rej_info
+                    h_req.performed_at AS req_time,
+                    u_req.admin_name AS req_name,
+                    h_iss.performed_at AS iss_time,
+                    u_iss.admin_name AS iss_name,
+                    h_ret.performed_at AS ret_time,
+                    u_ret.admin_name AS ret_name,
+                    h_rec.performed_at AS rec_time,
+                    u_rec.admin_name AS rec_name,
+                    h_rej.performed_at AS rej_time,
+                    u_rej.admin_name AS rej_name
                 FROM drawing_requests r
-                LEFT JOIN drawing_request_history h_req ON r.id = h_req.request_id AND h_req.event_type = 'requested'
-                LEFT JOIN drawing_users u_req ON h_req.performed_by = u_req.id
-                
-                LEFT JOIN drawing_request_history h_iss ON r.id = h_iss.request_id AND h_iss.event_type = 'issued'
-                LEFT JOIN drawing_users u_iss ON h_iss.performed_by = u_iss.id
-                
-                LEFT JOIN drawing_request_history h_ret ON r.id = h_ret.request_id AND h_ret.event_type = 'returned'
-                LEFT JOIN drawing_users u_ret ON h_ret.performed_by = u_ret.id
-                
-                LEFT JOIN drawing_request_history h_rec ON r.id = h_rec.request_id AND h_rec.event_type = 'received'
-                LEFT JOIN drawing_users u_rec ON h_rec.performed_by = u_rec.id
-                
-                LEFT JOIN drawing_request_history h_rej ON r.id = h_rej.request_id AND h_rej.event_type = 'rejected'
-                LEFT JOIN drawing_users u_rej ON h_rej.performed_by = u_rej.id
-                
-                ORDER BY r.id DESC
-                LIMIT 1000
+                LEFT JOIN drawing_request_history h_req 
+                    ON r.id = h_req.request_id AND h_req.event_type = 'requested'
+                LEFT JOIN drawing_users u_req 
+                    ON h_req.performed_by = u_req.id
+
+                LEFT JOIN drawing_request_history h_iss 
+                    ON r.id = h_iss.request_id AND h_iss.event_type = 'issued'
+                LEFT JOIN drawing_users u_iss 
+                    ON h_iss.performed_by = u_iss.id
+
+                LEFT JOIN drawing_request_history h_ret 
+                    ON r.id = h_ret.request_id AND h_ret.event_type = 'returned'
+                LEFT JOIN drawing_users u_ret 
+                    ON h_ret.performed_by = u_ret.id
+
+                LEFT JOIN drawing_request_history h_rec 
+                    ON r.id = h_rec.request_id AND h_rec.event_type = 'received'
+                LEFT JOIN drawing_users u_rec 
+                    ON h_rec.performed_by = u_rec.id
+
+                LEFT JOIN drawing_request_history h_rej 
+                    ON r.id = h_rej.request_id AND h_rej.event_type = 'rejected'
+                LEFT JOIN drawing_users u_rej 
+                    ON h_rej.performed_by = u_rej.id
             """
+
+            if date_filter:
+                query += " " + date_filter
+
+            query += " ORDER BY r.id DESC LIMIT 1000"
+
             rows = db.fetch_all(query)
-            
-            # If a drawing was rejected, we might want to show that in the status or merge it with issuance
+
+            formatted_rows = []
             for row in rows:
-                if row['status'] == 'Rejected' and row['rej_info'] != '—':
-                    row['iss_info'] = "REJECTED"
-            
-            return rows
+
+                def format_time(name, time):
+                    if time:
+                        return "{} at {}".format(name, time.strftime("%d-%m-%Y %H:%M"))
+                    return "—"
+
+                formatted_rows.append(
+                    {
+                        "id": row["id"],
+                        "no": row["no"],
+                        "rev": row["rev"],
+                        "status": row["status"],
+                        "req_info": format_time(row["req_name"], row["req_time"]),
+                        "iss_info": format_time(row["iss_name"], row["iss_time"]),
+                        "ret_info": format_time(row["ret_name"], row["ret_time"]),
+                        "rec_info": format_time(row["rec_name"], row["rec_time"]),
+                        "rej_info": format_time(row["rej_name"], row["rej_time"]),
+                    }
+                )
+
+                if row["status"].upper() == "REJECTED" and row["rej_time"]:
+                    formatted_rows[-1]["iss_info"] = "REJECTED"
+
+            return formatted_rows
+
         except Exception as e:
-            print("Error fetching report data: {}".format(e))
+            print("Error:", str(e))
             return []
 
+    # ================= FORMATTERS =================
+    def _format_status(self, val, record):
+        val_upper = str(val).upper()
+        color = (
+            "#28a745"
+            if val_upper == "ISSUED"
+            else "#dc3545" if val_upper == "REJECTED" else "#000"
+        )
+        return val_upper, color, ("Segoe UI", 9, "bold"), "center"
+
+    def _format_info(self, val, record):
+        color = "#dc3545" if record["status"].upper() == "REJECTED" else "#000"
+        return val or "—", color, ("Segoe UI", 9), "w"
+
+    # ================= ACTIONS =================
     def _get_actions(self, record):
-        # Add a "Details" button to every row
         return [("Details", styles.PRIMARY, "white", self._show_details)]
 
     def _show_details(self, record):
@@ -198,5 +552,6 @@ class ReportsPage(ttk.Frame):
 
         ttk.Button(footer, text="Close", command=dialog.destroy, style="Flat.TButton").pack(side="bottom")
 
-    def refresh(self, reset_pagination=True, silent=False, button_silent=False):
-        self.table.refresh(reset_pagination=reset_pagination, silent=silent, button_silent=button_silent)
+    # ================= REFRESH =================
+    def refresh(self, *args, **kwargs):
+        self.table.refresh()

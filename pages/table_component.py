@@ -77,6 +77,10 @@ class CanvasDataTable(ttk.Frame):
         self.dragging_col = -1
         self.data_keys = data_keys or []
         
+        # Sorting State
+        self.sort_col_index = -1 
+        self.sort_ascending = True
+        
         self._build_ui()
         # Remove update_idletasks() as it blocks the main thread during instantiation.
         # Defer stretching to when the widget is actually mapped and has a width.
@@ -352,9 +356,20 @@ class CanvasDataTable(ttk.Frame):
             
             # Text
             text_x = x + w//2
+            header_fg = "#1e293b" # active header color
+            header_font = ("Segoe UI", 10, "bold")
+            
+            if i == self.sort_col_index:
+                header_fg = styles.PRIMARY
+                # Draw sort indicator (arrow)
+                arrow = " ▲" if self.sort_ascending else " ▼"
+                display_head = head + arrow
+            else:
+                display_head = head
+
             self.canvas.create_text(text_x, header_height//2,
-                                   text=head, fill="#374151",
-                                   font=("Segoe UI", 10, "bold"), anchor="center",
+                                   text=display_head, fill=header_fg,
+                                   font=header_font, anchor="center",
                                    tags=("header", "head%d" % i))
 
             if i < len(self.headers) - 1:
@@ -631,8 +646,16 @@ class CanvasDataTable(ttk.Frame):
                 self.canvas.config(cursor="sb_h_double_arrow")
                 return
             
-            # Header Area Click (No Sorting)
+            # Header Area Click (Sorting)
             if any(t == "header" for t in tags):
+                # Calculate which column was clicked
+                curr_x = 0
+                for i, w in enumerate(self.col_widths):
+                    if cx < curr_x + w:
+                        if i < len(self.headers) - 1: # Don't sort Action column
+                            self._sort_by_column(i)
+                        break
+                    curr_x += w
                 return
 
         for item in items:
@@ -723,3 +746,33 @@ class CanvasDataTable(ttk.Frame):
             self.current_page += 1
             self.canvas.yview_moveto(0)
             self._redraw_table()
+
+    def _sort_by_column(self, col_idx):
+        if not self.data: return
+        
+        if col_idx == self.sort_col_index:
+            self.sort_ascending = not self.sort_ascending
+        else:
+            self.sort_col_index = col_idx
+            self.sort_ascending = True
+            
+        # Determine the key to sort by
+        if hasattr(self, 'data_keys') and col_idx < len(self.data_keys):
+            key = self.data_keys[col_idx]
+        else:
+            return
+
+        def sort_key(item):
+            val = item.get(key, "")
+            if val is None: return ""
+            # Try numeric sort for ID, Revision or any integer-looking string
+            if isinstance(val, int) or isinstance(val, float):
+                return val
+            s_val = str(val).strip()
+            if s_val.isdigit():
+                try: return int(s_val)
+                except: pass
+            return s_val.lower()
+
+        self.data.sort(key=sort_key, reverse=not self.sort_ascending)
+        self._apply_search(reset_pagination=True)

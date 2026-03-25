@@ -34,9 +34,12 @@ class DrawingIssuancePage(ttk.Frame):
 
     def _format_status(self, val, record):
         s = str(val).lower()
-        if s == "rejected": color = "#ef4444"
-        elif s == "issued": color = "#008000"
-        else: color = "#1f2937"
+        if s == "rejected":
+            color = "#ef4444"
+        elif s == "issued":
+            color = "#008000"
+        else:
+            color = "#1f2937"
         return str(val).upper(), color, ("Segoe UI", 10), "center"
 
     def _format_requested_by(self, val, record):
@@ -44,7 +47,6 @@ class DrawingIssuancePage(ttk.Frame):
 
     def _fetch_requests(self):
         try:
-
             query = """
                 SELECT 
                     r.id,
@@ -66,7 +68,7 @@ class DrawingIssuancePage(ttk.Frame):
                 LIMIT 500
             """
             rows = db.fetch_all(query)
-            return rows
+            return rows if rows else []
         except Exception as e:
             print("Error fetching requests: {}".format(e))
             return []
@@ -74,31 +76,149 @@ class DrawingIssuancePage(ttk.Frame):
     def _get_actions(self, record):
         status = record.get("status")
         if status in ('Pending', 'open'):
-            buttons = []
-            buttons.append(("Issue", "#10b981", "white", self._handle_issue))
-            buttons.append(("Reject", "#ef4444", "white", self._handle_reject))
-            return buttons
-  
+            return [
+                ("Issue", "#10b981", "white", self._handle_issue),
+                ("Reject", "#ef4444", "white", self._handle_reject)
+            ]
         elif status == 'Rejected':
             info = record.get("rejected_info", "Rejected")
-            if info and info != "Rejected": info = "Rejected by " + info
+            if info and info != "Rejected":
+                info = "Rejected by " + info
             return (info, "#ef4444", ("Segoe UI", 9, "italic"), "center")
-        else :
+        else:
             info = record.get("issued_info", "Issued")
-            if info and info != "Issued": info = "Issued by " + info
+            if info and info != "Issued":
+                info = "Issued by " + info
             return (info, "#008000", ("Segoe UI", 9, "italic"), "center")
+
         return []
 
+    # ====================== NEW: Check latest revision on button click ======================
     def _handle_issue(self, record):
         request_id = record.get("id")
         drawing_no = record.get("no")
+        requested_rev = record.get("rev")
+
+        try:
+            # Check latest approved revision from backend
+            latest_query = """
+                SELECT revision 
+                FROM master_data_new 
+                WHERE catalog = %s 
+                  AND approved_status = 'approved'
+                ORDER BY auto_id DESC 
+                LIMIT 1
+            """
+            latest_data = db.fetch_all(latest_query, (drawing_no,))
+            latest_rev = latest_data[0]['revision'] if latest_data else None
+
+            # Case 1: No newer revision or same as requested
+            if not latest_rev or str(requested_rev) == str(latest_rev):
+                if messagebox.askyesno("Confirm Issue", 
+                                       "Are you sure you want to issue drawing {}?".format(drawing_no)):
+                    self._finish_issuance(record, requested_rev)
+                return
+
+            # Case 2: Newer revision available → Show modal
+            self._show_revision_modal(record, requested_rev, latest_rev)
+
+        except Exception as e:
+            print("Error checking latest revision: {}".format(e))
+            # Fallback: Issue the originally requested revision
+            if messagebox.askyesno("Confirm Issue", 
+                                   "Are you sure you want to issue drawing {}?".format(drawing_no)):
+                self._finish_issuance(record, requested_rev)
+
+    def _show_revision_modal(self, record, req_rev, lat_rev):
+        dialog = tk.Toplevel(self)
+        dialog.title("Revision Selection")
+        dialog.geometry("450x380")
+        dialog.configure(bg="white")
+        dialog.resizable(False, False)
+        dialog.transient(self.winfo_toplevel())
         
-        if not messagebox.askyesno("Confirm Issue", "Are you sure you want to issue drawing %s?" % drawing_no):
-            return
+        # Robust grab set
+        def _apply_grab():
+            try:
+                if dialog.winfo_exists():
+                    dialog.grab_set()
+            except:
+                pass
+        dialog.after(100, _apply_grab)
+
+        # Center dialog
+        dialog.update_idletasks()
+        try:
+            main_w = self.winfo_toplevel().winfo_width()
+            main_h = self.winfo_toplevel().winfo_height()
+            x = self.winfo_toplevel().winfo_rootx() + (main_w - 450) // 2
+            y = self.winfo_toplevel().winfo_rooty() + (main_h - 380) // 2
+            dialog.geometry("+%d+%d" % (x, y))
+        except:
+            pass
+
+        # Header
+        header = tk.Frame(dialog, bg=styles.PRIMARY, height=70)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text="Choose Revision to Issue", 
+                 font=("Segoe UI", 16, "bold"), fg="white", bg=styles.PRIMARY).pack(pady=15)
+
+        # Body
+        body = tk.Frame(dialog, bg="white", padx=30, pady=20)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(body, text="A newer approved revision exists for this drawing.", 
+                 font=("Segoe UI", 10), bg="white", fg=styles.DARK).pack(pady=(0, 20))
+
+        # Info Box
+        info_frame = tk.Frame(body, bg="#f8fafc", padx=15, pady=15, 
+                              highlightthickness=1, highlightbackground="#e2e8f0")
+        info_frame.pack(fill="x", pady=5)
+        
+        tk.Label(info_frame, text="Drawing No: {}".format(record.get("no")), 
+                 font=("Segoe UI", 11, "bold"), bg="#f8fafc", fg=styles.DARK).pack(anchor="w")
+        tk.Label(info_frame, text="Requested: Rev {}".format(req_rev), 
+                 font=("Segoe UI", 10), bg="#f8fafc", fg=styles.GRAY_TEXT).pack(anchor="w", pady=(5, 0))
+        tk.Label(info_frame, text="Latest: Rev {}".format(lat_rev), 
+                 font=("Segoe UI", 10, "bold"), bg="#f8fafc", fg="#10b981").pack(anchor="w")
+
+        # Selection Buttons
+        btn_frame = tk.Frame(body, bg="white", pady=25)
+        btn_frame.pack(fill="x")
+
+        def issue_requested():
+            dialog.destroy()
+            self._finish_issuance(record, req_rev)
+
+        def issue_latest():
+            dialog.destroy()
+            self._finish_issuance(record, lat_rev)
+
+        # Buttons (appearance unchanged)
+        btn_req = tk.Button(btn_frame, text="Issue Requested ({})".format(req_rev),
+                            font=("Segoe UI", 9, "bold"), bg="#f1f5f9", fg=styles.DARK,
+                            command=issue_requested, relief="flat", padx=15, pady=8)
+        btn_req.pack(side="left", expand=True)
+
+        btn_lat = tk.Button(btn_frame, text="Issue Latest ({})".format(lat_rev),
+                            font=("Segoe UI", 9, "bold"), bg="#4f46e5", fg="white",
+                            command=issue_latest, relief="flat", padx=15, pady=8)
+        btn_lat.pack(side="right", expand=True)
+
+    def _finish_issuance(self, record, target_rev):
+        request_id = record.get("id")
+        drawing_no = record.get("no")
+        current_rev = record.get("rev")
+
+        # Update revision if different
+        if target_rev and str(target_rev) != str(current_rev):
+            db.execute_query("UPDATE drawing_requests SET revision = %s WHERE id = %s", 
+                           (target_rev, request_id))
 
         query = "UPDATE drawing_requests SET status = 'Issued' WHERE id = %s"
         if db.execute_query(query, (request_id,)):
-            # Log to history
+            # Log history
             insert_history = """
                 INSERT INTO drawing_request_history 
                 (request_id, event_type, performed_by) 
@@ -106,7 +226,8 @@ class DrawingIssuancePage(ttk.Frame):
             """
             db.execute_query(insert_history, (request_id, self.user_id or 1))
 
-            messagebox.showinfo("Issuance", "Drawing %s has been issued successfully." % drawing_no)
+            msg = "Drawing {} (Rev {}) has been issued successfully.".format(drawing_no, target_rev)
+            messagebox.showinfo("Issuance", msg)
             self.refresh(reset_pagination=False)
         else:
             messagebox.showerror("Error", "Failed to update status in database.")
@@ -115,12 +236,12 @@ class DrawingIssuancePage(ttk.Frame):
         request_id = record.get("id")
         drawing_no = record.get("no")
         
-        if not messagebox.askyesno("Reject", "Are you sure you want to reject the request for %s?" % drawing_no):
+        if not messagebox.askyesno("Reject", 
+                                   "Are you sure you want to reject the request for {}?".format(drawing_no)):
             return
 
         query = "UPDATE drawing_requests SET status = 'Rejected' WHERE id = %s"
         if db.execute_query(query, (request_id,)):
-            # Log to history
             insert_history = """
                 INSERT INTO drawing_request_history 
                 (request_id, event_type, performed_by) 
@@ -128,7 +249,7 @@ class DrawingIssuancePage(ttk.Frame):
             """
             db.execute_query(insert_history, (request_id, self.user_id or 1))
 
-            messagebox.showinfo("Rejected", "Request for %s has been rejected." % drawing_no)
+            messagebox.showinfo("Rejected", "Request for {} has been rejected.".format(drawing_no))
             self.refresh(reset_pagination=False)
         else:
             messagebox.showerror("Error", "Failed to update status in database.")
