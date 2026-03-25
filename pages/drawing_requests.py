@@ -21,17 +21,21 @@ class DrawingRequestsPage(ttk.Frame):
         self.table = CanvasDataTable(
             self,
             title="Drawing Requisitions",
-            headers=["SNo", "Drawing ID", "Revision", "Status", "Requested By", "Action"],
+            headers=[
+                "SNo",
+                "Drawing ID",
+                "Revision",
+                "Status",
+                "Requested By",
+                "Action",
+            ],
             initial_widths=[80, 200, 100, 140, 300, 140],
             fetch_data_func=self._fetch_drawings,
             get_action_buttons_func=self._get_actions,
             search_placeholder="Search drawings...",
             search_keys=["no", "rev", "status", "requested_by"],
-            cell_formatters={
-                3: self._format_status,
-                4: self._format_requested_by
-            },
-            on_data_ready_callback=on_data_ready
+            cell_formatters={3: self._format_status, 4: self._format_requested_by},
+            on_data_ready_callback=on_data_ready,
         )
 
         self.table.data_keys = ["id", "no", "rev", "status", "requested_by"]
@@ -57,22 +61,32 @@ class DrawingRequestsPage(ttk.Frame):
         try:
 
             query = """
-                SELECT 
-                    m.catalog AS no, 
-                    m.revision AS rev, 
-                    m.approved_status AS status, 
-                    m.auto_id AS id,
-                    CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i:%s')) AS requested_by
-                FROM master_data_new m
-                JOIN (
-                    SELECT catalog, MAX(auto_id) AS max_auto_id
-                    FROM master_data_new
-                    WHERE approved_status = 'approved'
-                    GROUP BY catalog
-                ) AS t ON m.catalog = t.catalog AND m.auto_id = t.max_auto_id
-                LEFT JOIN drawing_requests r ON r.drawing_id = m.catalog AND r.revision = m.revision
-                LEFT JOIN drawing_users u ON r.requested_by = u.id
-                ORDER BY m.catalog;
+ SELECT 
+    m.catalog AS no, 
+    m.revision AS rev, 
+    m.approved_status AS status, 
+    m.auto_id AS id,
+    CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i:%s')) AS requested_by
+FROM master_data_new m
+JOIN (
+    SELECT catalog, MAX(auto_id) AS max_auto_id
+    FROM master_data_new
+    WHERE approved_status = 'approved'
+    GROUP BY catalog
+) AS t ON m.catalog = t.catalog AND m.auto_id = t.max_auto_id
+LEFT JOIN (
+    SELECT r1.drawing_id, r1.revision, r1.requested_by, r1.requested_at
+    FROM drawing_requests r1
+    JOIN (
+        SELECT drawing_id, revision, MAX(requested_at) AS max_ts
+        FROM drawing_requests
+        GROUP BY drawing_id, revision
+    ) r2 ON r1.drawing_id = r2.drawing_id 
+          AND r1.revision = r2.revision 
+          AND r1.requested_at = r2.max_ts
+) r ON r.drawing_id = m.catalog AND r.revision = m.revision
+LEFT JOIN drawing_users u ON r.requested_by = u.id
+ORDER BY m.catalog;
             """
 
             rows = db.fetch_all(query)
@@ -90,13 +104,9 @@ class DrawingRequestsPage(ttk.Frame):
         buttons = []
 
         if not drawing.get("requested_by"):
-            buttons.append(
-                ("Request", styles.PRIMARY, "white", self._request_drawing)
-            )
+            buttons.append(("Request", styles.PRIMARY, "white", self._request_drawing))
         else:
-            buttons.append(
-                ("Requested", "#e2e8f0", "#6b7280", None)
-            )
+            buttons.append(("Requested", "#e2e8f0", "#6b7280", None))
 
         return buttons
 
@@ -112,14 +122,16 @@ class DrawingRequestsPage(ttk.Frame):
 
         confirm = messagebox.askyesno(
             "Confirm Request",
-            "Request drawing %s (Revision: %s)?" % (catalog, revision)
+            "Request drawing %s (Revision: %s)?" % (catalog, revision),
         )
 
         if not confirm:
             return
 
         if not self.user_id:
-            messagebox.showerror("Error", "User session not found. Please log in again.")
+            messagebox.showerror(
+                "Error", "User session not found. Please log in again."
+            )
             return
 
         # Double check if already requested
@@ -133,8 +145,11 @@ class DrawingRequestsPage(ttk.Frame):
         if existing:
             self.refresh(reset_pagination=False)
             info = existing[0]
-            messagebox.showwarning("Already Requested", 
-                "This drawing has already been requested by %s at %s." % (info['admin_name'], info['ts']))
+            messagebox.showwarning(
+                "Already Requested",
+                "This drawing has already been requested by %s at %s."
+                % (info["admin_name"], info["ts"]),
+            )
             return
 
         # Save to drawing_requests
@@ -143,10 +158,12 @@ class DrawingRequestsPage(ttk.Frame):
             (drawing_id, revision, auto_id, requested_by, status) 
             VALUES (%s, %s, %s, %s, 'Pending')
         """
-        
+
         # Get last insert ID for history
-        request_id = db.execute_insert(insert_request, (catalog, revision, auto_id, self.user_id))
-        
+        request_id = db.execute_insert(
+            insert_request, (catalog, revision, auto_id, self.user_id)
+        )
+
         if request_id:
             # Save to drawing_request_history
             insert_history = """
@@ -157,14 +174,10 @@ class DrawingRequestsPage(ttk.Frame):
             db.execute_query(insert_history, (request_id, self.user_id))
 
             # Update local state for instant feedback
-            now_str = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-            drawing["requested_by"] = "%s at %s" % (self.username, now_str)
-            self.table._redraw_table()
-            
-            messagebox.showinfo(
-                "Success",
-                "Request submitted for drawing %s" % catalog
-            )
+            now_str = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+            self.refresh(reset_pagination=False)
+
+            messagebox.showinfo("Success", "Request submitted for drawing %s" % catalog)
         else:
             messagebox.showerror("Error", "Failed to submit request to database.")
 
@@ -173,4 +186,8 @@ class DrawingRequestsPage(ttk.Frame):
     # ------------------------------
 
     def refresh(self, reset_pagination=True, silent=False, button_silent=False):
-        self.table.refresh(reset_pagination=reset_pagination, silent=silent, button_silent=button_silent)
+        self.table.refresh(
+            reset_pagination=reset_pagination,
+            silent=silent,
+            button_silent=button_silent,
+        )

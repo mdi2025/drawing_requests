@@ -19,7 +19,7 @@ class ReportsPage(ttk.Frame):
 
         self._cal_canvas = None
 
-        # ================= DATE FILTER =================
+        # ================= DATE FILTER & EXPORT =================
         filter_frame = tk.Frame(self, bg="white")
         filter_frame.pack(fill="x", padx=10, pady=5)
 
@@ -42,14 +42,35 @@ class ReportsPage(ttk.Frame):
             "<Button-1>", lambda e: self._show_calendar(self.to_entry, self.to_date_var)
         )
 
-        ttk.Button(filter_frame, text="Apply Filter", command=self.refresh).pack(
-            side="left", padx=10
+        # Apply Filter Button (Blue)
+        apply_btn = tk.Button(
+            filter_frame,
+            text="Apply Filter",
+            command=self.refresh,
+            bg="#3b82f6",  # Blue background
+            fg="white",  # White text
+            activebackground="#2563eb",
+            activeforeground="white",
+            relief="flat",
+            padx=10,
+            pady=3,
         )
+        apply_btn.pack(side="left", padx=10)
 
-        # ================= EXPORT =================
-        ttk.Button(self, text="Export Excel (.xlsx)", command=self._export_xlsx).pack(
-            anchor="e", padx=10, pady=5
+        # Export Button (Blue, aligned with filter)
+        export_btn = tk.Button(
+            filter_frame,
+            text="Export Excel (.xlsx)",
+            command=self._export_xlsx,
+            bg="#3b82f6",
+            fg="white",
+            activebackground="#2563eb",
+            activeforeground="white",
+            relief="flat",
+            padx=10,
+            pady=3,
         )
+        export_btn.pack(side="right")
 
         # ================= TABLE =================
         self.table = CanvasDataTable(
@@ -178,7 +199,6 @@ class ReportsPage(ttk.Frame):
 
             data = self._fetch_report_data()
 
-            # Helper to create a cell
             def create_cell(val, r, c):
                 el = ET.Element("c", {"r": "%s%d" % (c, r), "t": "inlineStr"})
                 is_el = ET.SubElement(el, "is")
@@ -186,7 +206,6 @@ class ReportsPage(ttk.Frame):
                 t.text = saxutils.escape(str(val) if val is not None else "")
                 return el
 
-            # ---------------- Sheet ----------------
             worksheet = ET.Element(
                 "worksheet",
                 {"xmlns": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"},
@@ -229,7 +248,6 @@ class ReportsPage(ttk.Frame):
                 worksheet
             )
 
-            # ---------------- Workbook ----------------
             workbook = ET.Element(
                 "workbook",
                 {
@@ -245,7 +263,6 @@ class ReportsPage(ttk.Frame):
                 workbook
             )
 
-            # ---------------- Content Types ----------------
             content_types = ET.Element(
                 "Types",
                 {
@@ -285,7 +302,6 @@ class ReportsPage(ttk.Frame):
                 content_types
             )
 
-            # ---------------- Relationships ----------------
             rels = ET.Element(
                 "Relationships",
                 {
@@ -322,7 +338,6 @@ class ReportsPage(ttk.Frame):
                 workbook_rels
             )
 
-            # ---------------- CREATE ZIP ----------------
             z = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED)
             z.writestr("[Content_Types].xml", content_types_xml)
             z.writestr("_rels/.rels", rels_xml)
@@ -404,7 +419,7 @@ class ReportsPage(ttk.Frame):
 
                 def format_time(name, time):
                     if time:
-                        return "{} at {}".format(name, time.strftime("%d-%m-%Y %H:%M"))
+                        return "%s at %s" % (name, time.strftime("%d-%m-%Y %H:%M"))
                     return "—"
 
                 formatted_rows.append(
@@ -448,6 +463,7 @@ class ReportsPage(ttk.Frame):
     def _get_actions(self, record):
         return [("Details", styles.PRIMARY, "white", self._show_details)]
 
+    # ================= DETAILS MODAL =================
     def _show_details(self, record):
         """Show a premium modal with full lifecycle history."""
         dialog = tk.Toplevel(self)
@@ -551,7 +567,6 @@ class ReportsPage(ttk.Frame):
         footer.pack(fill="x")
 
         ttk.Button(footer, text="Close", command=dialog.destroy, style="Flat.TButton").pack(side="bottom")
-
     # ================= REFRESH =================
     def refresh(self, *args, **kwargs):
         self.table.refresh()
