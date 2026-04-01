@@ -161,6 +161,9 @@ class MainApp(ttk.Frame):
         # Show page first so user sees the layout
         self.current_page = self.pages.get(page_key)
         if self.current_page:
+            if hasattr(self.current_page, 'status_var'):
+                self.current_page.status_var.set("All")
+            
             self.current_page.pack(fill="both", expand=True, padx=20, pady=20)
             # Refresh data after a small delay to keep UI snappy
             if hasattr(self.current_page, 'refresh'):

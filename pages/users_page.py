@@ -17,8 +17,8 @@ class UsersPage(ttk.Frame):
         self.table = CanvasDataTable(
             self,
             title="User Management",
-            headers=["ID", "Username", "Department", "Permissions", "Actions"],
-            initial_widths=[60, 180, 180, 280, 180],
+            headers=["ID", "Username", "Department", "Permissions", "Role", "Actions"],
+            initial_widths=[60, 180, 180, 280, 120, 220],
             fetch_data_func=self._fetch_users,
             get_action_buttons_func=self._get_actions,
             search_placeholder="Search users...",
@@ -26,13 +26,21 @@ class UsersPage(ttk.Frame):
             cell_formatters={
                 0: lambda v, r: (str(v), "#1f2937", ("Segoe UI", 10), "center"),
                 3: self._format_permissions,
+                4: self._format_roles,
             },
             on_data_ready_callback=on_data_ready,
         )
-        self.table.data_keys = ["id", "admin_name", "department", "access_tokens"]
+        # Include user_role in the data keys fetched per row
+        self.table.data_keys = [
+            "id",
+            "admin_name",
+            "department",
+            "access_tokens",
+            "user_role",
+        ]
 
         # Add the 'Add User' button to the header
-        header_frame = self.table.winfo_children()[0]  # Header frame is first child
+        header_frame = self.table.winfo_children()[0]
         ttk.Button(
             header_frame,
             text="+ Add User",
@@ -42,6 +50,38 @@ class UsersPage(ttk.Frame):
 
         self.table.pack(expand=True, fill="both")
         self.pack_propagate(False)
+
+    # ── Role display helpers ──────────────────────────────────────────────────
+
+    ROLE_COLORS = {
+        "ADMIN": ("#7c3aed", "#ede9fe"),  # purple text, lavender bg
+        "ISSUER": ("#0369a1", "#e0f2fe"),  # blue text, sky bg
+        "REQUESTER": ("#065f46", "#d1fae5"),  # green text, mint bg
+    }
+
+    def _format_roles(self, roles_raw, record):
+        """Format user_role JSON list as comma-separated colored badges (text only)."""
+        if not roles_raw:
+            return ("—", "#9ca3af", ("Segoe UI", 9, "italic"), "center")
+
+        if isinstance(roles_raw, (str, bytes)):
+            try:
+                roles = json.loads(roles_raw)
+            except Exception:
+                roles = []
+        else:
+            roles = roles_raw if isinstance(roles_raw, list) else []
+
+        if not roles:
+            return ("—", "#9ca3af", ("Segoe UI", 9, "italic"), "center")
+
+        label = ", ".join(r.capitalize() for r in roles)
+        # Pick color of the first (or most privileged) role
+        first = roles[0].upper() if roles else ""
+        color, _ = self.ROLE_COLORS.get(first, ("#374151", "#f3f4f6"))
+        return (label, color, ("Segoe UI", 9, "bold"), "center")
+
+    # ── Permissions display ───────────────────────────────────────────────────
 
     def _format_permissions(self, tokens, record):
         perm_map = {1: "Req", 2: "Issue", 3: "Ret", 4: "Rec", 5: "Rpt", 6: "Users"}
@@ -53,6 +93,8 @@ class UsersPage(ttk.Frame):
                 names.append(perm_map[t])
         return ", ".join(names), styles.PRIMARY, ("Segoe UI", 9, "italic"), "w"
 
+    # ── Data fetching ─────────────────────────────────────────────────────────
+
     def _fetch_users(self):
         try:
             import sys, os
@@ -62,27 +104,48 @@ class UsersPage(ttk.Frame):
             )
             from db_handler import db
 
-            query = "SELECT id, admin_name, department, access_tokens FROM drawing_users WHERE is_deleted=0 ORDER BY id"
+            query = (
+                "SELECT id, admin_name, department, access_tokens, user_role "
+                "FROM drawing_users WHERE is_deleted=0 ORDER BY id"
+            )
             data = db.fetch_all(query) or []
 
             for user in data:
+                # Parse access_tokens
                 tokens = user.get("access_tokens", [])
                 if isinstance(tokens, (str, bytes)):
                     try:
                         tokens = json.loads(tokens)
-                    except:
+                    except Exception:
                         tokens = []
                 user["access_tokens"] = tokens
+
+                # Parse user_role
+                roles = user.get("user_role", [])
+                if isinstance(roles, (str, bytes)):
+                    try:
+                        roles = json.loads(roles) 
+                    except Exception:
+                        roles = []
+                user["user_role"] = roles if isinstance(roles, list) else []
+
             return data
         except Exception as e:
             print("Error fetching users: {}".format(e))
             return []
 
+    # ── Action buttons ────────────────────────────────────────────────────────
+
     def _get_actions(self, user):
         buttons = []
         buttons.append(("Edit", styles.PRIMARY, "white", self._show_edit_user_dialog))
+        buttons.append(
+            ("Assign Role", "#7c3aed", "white", self._show_assign_role_dialog)
+        )
         buttons.append(("Delete", "#ef4444", "white", self._delete_user))
         return buttons
+
+    # ── Add / Edit user dialog ────────────────────────────────────────────────
 
     def _show_add_user_dialog(self):
         self._user_dialog("Add New User")
@@ -126,9 +189,42 @@ class UsersPage(ttk.Frame):
 
         ttk.Label(frm, text="Department", background="white").pack(anchor="w")
         dept_var = tk.StringVar(value=user.get("department", "") if user else "")
-        tk.Entry(frm, textvariable=dept_var, font=("Segoe UI", 10)).pack(
-            fill="x", pady=(0, 15)
+
+        try:
+            from db_handler import db
+
+            dept_rows = db.fetch_all(
+                "SELECT description_short FROM departments ORDER BY description_short"
+            )
+            dept_list = [
+                r["description_short"] for r in dept_rows if r["description_short"]
+            ]
+        except Exception:
+            dept_list = []
+
+        all_depts = ["-- Select Department --"] + dept_list
+        dept_combo = ttk.Combobox(
+            frm, textvariable=dept_var, values=all_depts, font=("Segoe UI", 10)
         )
+        dept_combo.pack(fill="x", pady=(0, 15))
+
+        if user and user.get("department") in dept_list:
+            dept_combo.set(user.get("department"))
+        else:
+            dept_combo.set("-- Select Department --")
+
+        def _filter_depts(event=None):
+            if event and event.keysym in ("Down", "Up", "Return", "Escape", "Tab"):
+                return
+            typed = dept_var.get().strip().lower()
+            if typed == "" or typed == "-- select department --":
+                dept_combo["values"] = all_depts
+            else:
+                filtered = [d for d in dept_list if typed in d.lower()]
+                dept_combo["values"] = filtered if filtered else ["No match found"]
+            dept_combo.after(10, lambda: dept_combo.event_generate("<Down>"))
+
+        dept_combo.bind("<KeyRelease>", _filter_depts)
 
         ttk.Label(
             frm, text="Permissions", background="white", font=("Segoe UI", 10, "bold")
@@ -174,17 +270,28 @@ class UsersPage(ttk.Frame):
             ).grid(row=row, column=col, sticky="w", padx=10, pady=2)
 
         def save():
-            uname, pwd, dept = (
-                username_var.get().strip(),
-                password_var.get().strip(),
-                dept_var.get().strip(),
-            )
-            sel_perms = [pid for pid, var in perm_vars.items() if var.get()]
+            uname = username_var.get().strip()
+            pwd = password_var.get().strip()
+            dept = dept_var.get().strip()
+
             if not uname:
                 messagebox.showerror("Error", "Username is required", parent=dlg)
                 return
             if not user and not pwd:
                 messagebox.showerror("Error", "Password is required", parent=dlg)
+                return
+            if dept in ("-- Select Department --", "", "No match found"):
+                messagebox.showerror("Error", "Please select a department", parent=dlg)
+                return
+
+            sel_perms = [pid for pid, var in perm_vars.items() if var.get()]
+            if not sel_perms:
+                messagebox.showerror(
+                    "Error",
+                    "Please select at least one permission.\n\n"
+                    "Without permissions the user will not be able to log in.",
+                    parent=dlg,
+                )
                 return
             if user:
                 self._update_user_db(user["id"], uname, pwd, dept, sel_perms, dlg)
@@ -197,8 +304,147 @@ class UsersPage(ttk.Frame):
         dlg.update_idletasks()
         try:
             dlg.grab_set()
-        except:
+        except Exception:
             pass
+
+    # ── Assign Role dialog ────────────────────────────────────────────────────
+
+    def _show_assign_role_dialog(self, user):
+        """Show a dialog to manually assign one or more roles to a user."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Assign Role — {}".format(user["admin_name"]))
+        dlg.geometry("380x320")
+        dlg.resizable(False, False)
+        dlg.configure(bg="white")
+        dlg.transient(self)
+
+        x = self.winfo_rootx() + (self.winfo_width() // 2) - 190
+        y = self.winfo_rooty() + (self.winfo_height() // 2) - 160
+        dlg.geometry("+{}+{}".format(x, y))
+
+        # ── Title ──
+        ttk.Label(
+            dlg,
+            text="Assign Role",
+            font=("Segoe UI", 13, "bold"),
+            background="white",
+        ).pack(pady=(20, 4))
+        ttk.Label(
+            dlg,
+            text="User: {}".format(user["admin_name"]),
+            font=("Segoe UI", 10),
+            foreground="#6b7280",
+            background="white",
+        ).pack(pady=(0, 16))
+
+        frm = tk.Frame(dlg, bg="white", padx=40)
+        frm.pack(fill="both", expand=True)
+
+        # ── Roles available ──
+        ALL_ROLES = ["ADMIN", "ISSUER", "REQUESTER"]
+
+        current_roles = user.get("user_role", [])
+        if isinstance(current_roles, (str, bytes)):
+            try:
+                current_roles = json.loads(current_roles)
+            except Exception:
+                current_roles = []
+
+        role_vars = {}
+        for role in ALL_ROLES:
+            var = tk.BooleanVar(value=role in current_roles)
+            role_vars[role] = var
+
+            # Colored row container
+            color_text, color_bg = self.ROLE_COLORS.get(role, ("#374151", "#f9fafb"))
+            row_frame = tk.Frame(frm, bg=color_bg, pady=4, padx=10)
+            row_frame.pack(fill="x", pady=4)
+
+            tk.Checkbutton(
+                row_frame,
+                text=role,
+                variable=var,
+                font=("Segoe UI", 10, "bold"),
+                fg=color_text,
+                bg=color_bg,
+                activebackground=color_bg,
+                selectcolor=color_bg,
+            ).pack(side="left")
+
+            # Short description
+            desc = {
+                "ADMIN": "Full access — all permissions",
+                "ISSUER": "Can issue & receive drawings",
+                "REQUESTER": "Can request & return drawings",
+            }.get(role, "")
+            tk.Label(
+                row_frame,
+                text=desc,
+                font=("Segoe UI", 8),
+                fg="#6b7280",
+                bg=color_bg,
+            ).pack(side="left", padx=(8, 0))
+
+        # ── Save button ──
+        def save_role():
+            selected = [r for r, v in role_vars.items() if v.get()]
+            self._save_user_role(user["id"], selected, dlg)
+
+        ttk.Button(
+            dlg, text="Save Role", style="Primary.TButton", command=save_role
+        ).pack(pady=20)
+
+        dlg.update_idletasks()
+        try:
+            dlg.grab_set()
+        except Exception:
+            pass
+
+    # Maps each role to its access_token set
+    ROLE_PERMISSIONS = {
+        "ADMIN": [1, 2, 3, 4, 5, 6],
+        "ISSUER": [2, 4, 5],
+        "REQUESTER": [1, 3, 5],
+    }
+
+    def _save_user_role(self, uid, roles, dlg):
+        """Persist user_role and auto-update access_tokens based on selected roles."""
+        try:
+            from db_handler import db
+
+            if not roles:
+                messagebox.showerror(
+                    "Error",
+                    "Please select at least one role.",
+                    parent=dlg,
+                )
+                return
+
+            # ── Merge permissions from all selected roles (union, sorted) ──
+            merged_tokens = set()
+            for role in roles:
+                merged_tokens.update(self.ROLE_PERMISSIONS.get(role, []))
+            merged_tokens = sorted(merged_tokens)
+
+            if db.execute_query(
+                "UPDATE drawing_users SET user_role=%s, access_tokens=%s WHERE id=%s",
+                (json.dumps(roles), json.dumps(merged_tokens), uid),
+            ):
+                messagebox.showinfo(
+                    "Success",
+                    "Role updated successfully.\nPermissions set to: {}".format(
+                        ", ".join(str(t) for t in merged_tokens)
+                    ),
+                    parent=dlg,
+                )
+                dlg.destroy()
+                self.refresh(reset_pagination=False)
+            else:
+                messagebox.showerror("Error", "Failed to update role", parent=dlg)
+        except Exception as e:
+            messagebox.showerror("Error", str(e), parent=dlg)
+
+    # ── DB create / update / delete ───────────────────────────────────────────
 
     def _create_user_db(self, username, password, department, perms, dlg):
         try:
@@ -211,8 +457,9 @@ class UsersPage(ttk.Frame):
                 return
             pwd_hash = hashlib.md5(password.encode("utf-8")).hexdigest()
             if db.execute_query(
-                "INSERT INTO drawing_users (admin_name, admin_pass, department, access_tokens) VALUES (%s, %s, %s, %s)",
-                (username, pwd_hash, department, json.dumps(perms)),
+                "INSERT INTO drawing_users (admin_name, admin_pass, department, access_tokens, user_role) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (username, pwd_hash, department, json.dumps(perms), json.dumps([])),
             ):
                 messagebox.showinfo("Success", "User created", parent=dlg)
                 dlg.destroy()
@@ -228,10 +475,16 @@ class UsersPage(ttk.Frame):
 
             if password:
                 pwd_hash = hashlib.md5(password.encode("utf-8")).hexdigest()
-                q = "UPDATE drawing_users SET admin_name=%s, admin_pass=%s, department=%s, access_tokens=%s WHERE id=%s"
+                q = (
+                    "UPDATE drawing_users SET admin_name=%s, admin_pass=%s, "
+                    "department=%s, access_tokens=%s WHERE id=%s"
+                )
                 p = (username, pwd_hash, department, json.dumps(perms), uid)
             else:
-                q = "UPDATE drawing_users SET admin_name=%s, department=%s, access_tokens=%s WHERE id=%s"
+                q = (
+                    "UPDATE drawing_users SET admin_name=%s, department=%s, "
+                    "access_tokens=%s WHERE id=%s"
+                )
                 p = (username, department, json.dumps(perms), uid)
             if db.execute_query(q, p):
                 messagebox.showinfo("Success", "User updated", parent=dlg)
@@ -248,7 +501,6 @@ class UsersPage(ttk.Frame):
         try:
             from db_handler import db
 
-            # Soft delete: mark as deleted
             if db.execute_query(
                 "UPDATE drawing_users SET is_deleted=1 WHERE id=%s", (user["id"],)
             ):

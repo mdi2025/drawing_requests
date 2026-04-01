@@ -6,9 +6,10 @@ import pymysql.cursors
 import sys
 import threading
 
+
 class DBHandler:
     def __init__(self):
-        self.host = "db.dev.erp.mdi"
+        self.host = "192.51.11.206"
         self.user = "erp"
         self.password = "erpdeveloper"
         self.dbname = "mdiacc"
@@ -17,13 +18,14 @@ class DBHandler:
 
     def warm_up(self):
         """Pre-establishes the database connection in a background thread."""
+
         def connect():
             try:
                 self.get_connection()
                 print("Database connection warmed up successfully.")
             except Exception as e:
                 print("Failed to warm up database connection: {}".format(e))
-        
+
         thread = threading.Thread(target=connect)
         thread.daemon = True
         thread.start()
@@ -38,9 +40,9 @@ class DBHandler:
                         user=self.user,
                         passwd=self.password,
                         db=self.dbname,
-                        charset='utf8',
+                        charset="utf8",
                         cursorclass=pymysql.cursors.DictCursor,
-                        autocommit=True
+                        autocommit=True,
                     )
                 return self.conn
             except pymysql.Error as e:
@@ -53,7 +55,7 @@ class DBHandler:
             conn = self._get_connection_no_lock()
             if not conn:
                 return []
-            
+
             cursor = conn.cursor()
             try:
                 if params:
@@ -76,9 +78,9 @@ class DBHandler:
                     user=self.user,
                     passwd=self.password,
                     db=self.dbname,
-                    charset='utf8',
+                    charset="utf8",
                     cursorclass=pymysql.cursors.DictCursor,
-                    autocommit=True
+                    autocommit=True,
                 )
             return self.conn
         except pymysql.Error as e:
@@ -91,7 +93,7 @@ class DBHandler:
             conn = self._get_connection_no_lock()
             if not conn:
                 return False
-            
+
             cursor = conn.cursor()
             try:
                 if params:
@@ -113,7 +115,7 @@ class DBHandler:
             conn = self._get_connection_no_lock()
             if not conn:
                 return None
-            
+
             cursor = conn.cursor()
             try:
                 if params:
@@ -133,6 +135,7 @@ class DBHandler:
         if self.conn:
             self.conn.close()
             self.conn = None
+
 
 # Global instance for easy access
 db = DBHandler()
