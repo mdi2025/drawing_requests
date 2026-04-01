@@ -53,23 +53,27 @@ class DrawingReceivePage(ttk.Frame):
             "returned_by",
             "return_date",
         ]
-        
+
         # Add Status Filter Dropdown
         filter_frame = tk.Frame(self.table.header_frame, bg=styles.LIGHT)
         filter_frame.pack(side="left", padx=(20, 0))
-        
+
         tk.Label(
-            filter_frame, text="Filter:", bg=styles.LIGHT, fg=styles.SECONDARY, font=("Segoe UI", 10)
+            filter_frame,
+            text="Filter:",
+            bg=styles.LIGHT,
+            fg=styles.SECONDARY,
+            font=("Segoe UI", 10),
         ).pack(side="left", padx=(0, 5))
-        
+
         self.status_var = tk.StringVar(value="All")
         self.status_cb = ttk.Combobox(
-            filter_frame, 
+            filter_frame,
             textvariable=self.status_var,
             values=["All", "Returned", "Received"],
             state="readonly",
             width=12,
-            font=("Segoe UI", 10)
+            font=("Segoe UI", 10),
         )
         self.status_cb.pack(side="left")
         self.status_cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
@@ -108,6 +112,7 @@ class DrawingReceivePage(ttk.Frame):
                 WHERE r.status IN ('Returned', 'Received')
                 AND (r.status = %s OR %s = 'All')
                 ORDER BY r.requested_at DESC
+                LIMIT 500;
             """
             rows = db.fetch_all(query, (selected_status, selected_status))
             return rows
@@ -152,7 +157,8 @@ class DrawingReceivePage(ttk.Frame):
 
         if not messagebox.askyesno(
             "Confirm Receive",
-            "Are you sure you want to receive Drawing %s (Rev: %s)?" % (drawing_no, record.get("rev")),
+            "Are you sure you want to receive Drawing %s (Rev: %s)?"
+            % (drawing_no, record.get("rev")),
         ):
             return
 

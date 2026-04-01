@@ -17,35 +17,66 @@ class DrawingReturnPage(ttk.Frame):
         self.table = CanvasDataTable(
             self,
             title="Drawing Return",
-            headers=["SNo", "Drawing ID", "Revision", "Bag Name", "IPD Catalog", "Status", "Remarks", "Issue/Reject Date", "Action"],
+            headers=[
+                "SNo",
+                "Drawing ID",
+                "Revision",
+                "Bag Name",
+                "IPD Catalog",
+                "Status",
+                "Remarks",
+                "Issue/Reject Date",
+                "Action",
+            ],
             initial_widths=[60, 140, 70, 120, 120, 110, 100, 180, 140],
             fetch_data_func=self._fetch_issued_drawings,
             get_action_buttons_func=self._get_actions,
             search_placeholder="Search issued drawings...",
-            search_keys=["no", "rev", "bag_name", "ipd_catalog", "status", "remarks", "rejected_info"],
+            search_keys=[
+                "no",
+                "rev",
+                "bag_name",
+                "ipd_catalog",
+                "status",
+                "remarks",
+                "rejected_info",
+            ],
             cell_formatters={5: self._format_status, 6: self._format_remarks},
             on_data_ready_callback=on_data_ready,
             on_cell_click=self._handle_cell_click,
             non_copyable_cols=[6],
         )
-        self.table.data_keys = ["id", "no", "rev", "bag_name", "ipd_catalog", "status", "remarks", "issue_reject_date"]
-        
+        self.table.data_keys = [
+            "id",
+            "no",
+            "rev",
+            "bag_name",
+            "ipd_catalog",
+            "status",
+            "remarks",
+            "issue_reject_date",
+        ]
+
         # Add Status Filter Dropdown
         filter_frame = tk.Frame(self.table.header_frame, bg=styles.LIGHT)
         filter_frame.pack(side="left", padx=(20, 0))
-        
+
         tk.Label(
-            filter_frame, text="Filter:", bg=styles.LIGHT, fg=styles.SECONDARY, font=("Segoe UI", 10)
+            filter_frame,
+            text="Filter:",
+            bg=styles.LIGHT,
+            fg=styles.SECONDARY,
+            font=("Segoe UI", 10),
         ).pack(side="left", padx=(0, 5))
-        
+
         self.status_var = tk.StringVar(value="All")
         self.status_cb = ttk.Combobox(
-            filter_frame, 
+            filter_frame,
             textvariable=self.status_var,
             values=["All", "Pending", "Issued", "Returned", "Received", "Rejected"],
             state="readonly",
             width=12,
-            font=("Segoe UI", 10)
+            font=("Segoe UI", 10),
         )
         self.status_cb.pack(side="left")
         self.status_cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
@@ -60,10 +91,10 @@ class DrawingReturnPage(ttk.Frame):
         try:
             if not self.user_id:
                 return []
-                
+
             status_filter = getattr(self, "status_var", None)
             selected_status = status_filter.get() if status_filter else "All"
-            
+
             if selected_status == "All":
                 status_condition = "r.status IN ('Pending', 'Issued', 'Returned', 'Received', 'Rejected')"
                 params = (self.user_id,)
@@ -71,7 +102,8 @@ class DrawingReturnPage(ttk.Frame):
                 status_condition = "r.status = %s"
                 params = (selected_status, self.user_id)
 
-            query = """
+            query = (
+                """
                 SELECT 
                     r.id,
                     r.drawing_id AS no,
@@ -107,9 +139,13 @@ class DrawingReturnPage(ttk.Frame):
                      LIMIT 1) AS remarks
                 FROM drawing_requests r
                 LEFT JOIN drawing_request_history h_iss ON r.id = h_iss.request_id AND h_iss.event_type = 'issued'
-                WHERE """ + status_condition + """ AND r.requested_by = %s
+                WHERE """
+                + status_condition
+                + """ AND r.requested_by = %s
                 ORDER BY r.id DESC
+                LIMIT 500;
             """
+            )
             rows = db.fetch_all(query, params)
             return rows
         except Exception as e:
@@ -230,7 +266,9 @@ class DrawingReturnPage(ttk.Frame):
 
         # Only ask confirmation if it's still genuinely "Issued"
         if not messagebox.askyesno(
-            "Confirm Return", "Are you sure you want to return Drawing %s (Rev: %s)?" % (drawing_no, record.get("rev"))
+            "Confirm Return",
+            "Are you sure you want to return Drawing %s (Rev: %s)?"
+            % (drawing_no, record.get("rev")),
         ):
             return
 
