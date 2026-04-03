@@ -5,9 +5,20 @@ from tkinter import ttk
 from tkinter import messagebox
 import datetime
 import threading
+import json
+import urllib.parse
+try:
+    import urllib.request as urllib_request
+except ImportError:
+    import urllib as urllib_request
 from pages.table_component import CanvasDataTable
 import styles
 from db_handler import db
+from config import app_url as API_BASE_URL, api_timeout as API_TIMEOUT
+
+# ─────────────────────────────────────────────
+# API endpoint
+# ─────────────────────────────────────────────
 
 
 class DrawingRequestsPage(ttk.Frame):
@@ -77,56 +88,21 @@ class DrawingRequestsPage(ttk.Frame):
 
     def _fetch_drawings(self):
         try:
+            url = API_BASE_URL + "?action=get_drawing_requests"
+            response = urllib_request.urlopen(url, timeout=API_TIMEOUT)
+            raw     = response.read().decode("utf-8")
+            result  = json.loads(raw)
 
-            query = """
- SELECT 
-    m.catalog AS no, 
-    m.revision AS rev, 
-    m.approved_status AS status, 
-    m.auto_id AS id,
-    CASE 
-        WHEN r.status IN ('Pending', 'Issued', 'Returned') THEN 
-            CONCAT(u.admin_name, ' at ', DATE_FORMAT(r.requested_at, '%d-%m-%Y %H:%i:%s'))
-        ELSE NULL
-    END AS requested_by,
-    CASE WHEN r.status IN ('Received', 'Rejected') THEN NULL ELSE r.status END AS req_status,
-    CASE WHEN r.status IN ('Received', 'Rejected') THEN NULL ELSE r.bag_name END AS bag_name,
-    CASE WHEN r.status IN ('Received', 'Rejected') THEN NULL ELSE r.ipd_catalog END AS ipd_catalog
-FROM master_data_new m
-JOIN (
-    SELECT catalog, MAX(auto_id) AS max_auto_id
-    FROM master_data_new
-    WHERE approved_status = 'approved'
-    GROUP BY catalog
-) AS t ON m.catalog = t.catalog AND m.auto_id = t.max_auto_id
-LEFT JOIN (
-    SELECT r1.drawing_id, r1.revision, r1.requested_by, r1.requested_at, r1.status, r1.bag_name, r1.ipd_catalog
-    FROM drawing_requests r1
-    JOIN (
-        SELECT drawing_id, revision, MAX(requested_at) AS max_ts
-        FROM drawing_requests
-        GROUP BY drawing_id, revision
-    ) r2 ON r1.drawing_id = r2.drawing_id 
-          AND r1.revision = r2.revision 
-          AND r1.requested_at = r2.max_ts
-) r ON r.drawing_id = m.catalog AND r.revision = m.revision
-LEFT JOIN drawing_users u ON r.requested_by = u.id
-WHERE r.status IS NULL 
-   OR r.status = 'Pending'
-   OR r.status = 'Issued'
-   OR r.status = 'Returned'
-   OR r.status = 'Received'
-   OR r.status = 'Rejected'
-ORDER BY m.catalog;
-            """
-
-            rows = db.fetch_all(query)
-            return rows
+            if result.get("response") == "true":
+                return result.get("data", [])
+            else:
+                print("API error: {}".format(result.get("message", "Unknown")))
+                return []
 
         except Exception as e:
-            print("Error fetching drawings: {}".format(e))
+            print("Error fetching drawings from API: {}".format(e))
             return []
-
+ 
     # ------------------------------
     # Action Buttons
     # ------------------------------
@@ -342,49 +318,35 @@ ORDER BY m.catalog;
             )
             return
 
-        # Check for existing requests
-        check_query = """
-            SELECT r.id, r.status, u.admin_name, DATE_FORMAT(r.requested_at, '%%d-%%m-%%Y %%H:%%i') as ts
-            FROM drawing_requests r
-            JOIN drawing_users u ON r.requested_by = u.id
-            WHERE r.drawing_id = %s AND r.revision = %s
-            AND r.status IN ('Pending', 'Issued', 'Returned')
-        """
-        existing = db.fetch_all(check_query, (catalog, revision))
-        if existing:
-            info = existing[0]
-            self.refresh(reset_pagination=False)
-            messagebox.showwarning(
-                "Already Requested",
-                "This drawing has already been requested by %s at %s."
-                % (info["admin_name"], info["ts"]),
-            )
+        # Call API to insert request
+        data = {
+            'action': 'insert_drawing_request',
+            'drawing_id': catalog,
+            'revision': revision,
+            'requested_by': self.user_id,
+            'bag_name': ipd_data.get("bag_name", ""),
+            'ipd_catalog': ipd_data.get("catalog_no", ""),
+        }
+        encoded_data = urllib.parse.urlencode(data).encode('utf-8')
+        req = urllib_request.Request(API_BASE_URL, data=encoded_data, method='POST')
+        try:
+            response = urllib_request.urlopen(req, timeout=API_TIMEOUT)
+            raw = response.read().decode("utf-8")
+            result = json.loads(raw)
+            if result.get("response") == "true":
+                request_id = result.get("request_id")
+                # Success
+            else:
+                messagebox.showerror("Error", result.get("message", "Failed to submit request."))
+                return
+        except ValueError as e:
+            print("Raw API response:", repr(raw))
+            messagebox.showerror("Error", "API returned invalid JSON: {}".format(e))
             return
-
-        # Always create new request (no update logic for rejected requests)
-        insert_request = """
-            INSERT INTO drawing_requests 
-            (drawing_id, revision, requested_by, status, bag_name, ipd_catalog) 
-            VALUES (%s, %s, %s, 'Pending', %s, %s)
-        """
-        params = (
-            catalog,
-            revision,
-            self.user_id,
-            ipd_data.get("bag_name"),
-            ipd_data.get("catalog_no"),
-        )
-
-        request_id = db.execute_insert(insert_request, params)
-
-        if request_id:
-            # Save to drawing_request_history
-            insert_history = """
-                INSERT INTO drawing_request_history 
-                (request_id, event_type, performed_by, revision) 
-                VALUES (%s, 'requested', %s, %s)
-            """
-            db.execute_query(insert_history, (request_id, self.user_id, revision))
+        except Exception as e:
+            print("API call failed with exception:", e)
+            messagebox.showerror("Error", "API call failed: {}".format(e))
+            return
 
         # Update UI immediately
         now_str = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")

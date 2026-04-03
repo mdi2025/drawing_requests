@@ -5,7 +5,10 @@ from tkinter import ttk
 from tkinter import messagebox
 import styles
 from pages.table_component import CanvasDataTable
-from db_handler import db
+import urllib.request
+import urllib.parse
+import json
+from config import app_url as API_BASE_URL, api_timeout as API_TIMEOUT
 
 
 class DrawingReturnPage(ttk.Frame):
@@ -95,59 +98,31 @@ class DrawingReturnPage(ttk.Frame):
             status_filter = getattr(self, "status_var", None)
             selected_status = status_filter.get() if status_filter else "All"
 
-            if selected_status == "All":
-                status_condition = "r.status IN ('Pending', 'Issued', 'Returned', 'Received', 'Rejected')"
-                params = (self.user_id,)
-            else:
-                status_condition = "r.status = %s"
-                params = (selected_status, self.user_id)
+            # Prepare API request
+            data = urllib.parse.urlencode({
+                'action': 'get_issued_drawings_for_user',
+                'user_id': self.user_id,
+                'status_filter': selected_status
+            }).encode('utf-8')
 
-            query = (
-                """
-                SELECT 
-                    r.id,
-                    r.drawing_id AS no,
-                    r.revision AS rev,
-                    r.bag_name,
-                    r.ipd_catalog,
-                    r.status,
-                    CASE 
-                        WHEN r.status = 'Rejected' THEN (SELECT DATE_FORMAT(h_rej.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s') 
-                                                         FROM drawing_request_history h_rej 
-                                                         WHERE h_rej.request_id = r.id AND h_rej.event_type = 'rejected' 
-                                                         LIMIT 1)
-                        WHEN r.status = 'Pending' THEN NULL
-                        ELSE DATE_FORMAT(h_iss.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s')
-                    END AS issue_reject_date,
-                    (SELECT CONCAT(u_ret.admin_name, ' at ', DATE_FORMAT(h_ret.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s'))
-                     FROM drawing_request_history h_ret
-                     JOIN drawing_users u_ret ON h_ret.performed_by = u_ret.id
-                     WHERE h_ret.request_id = r.id AND h_ret.event_type = 'returned'
-                     LIMIT 1) AS returned_info,
-                    (SELECT CONCAT(u_rec.admin_name, ' at ', DATE_FORMAT(h_rec.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s'))
-                     FROM drawing_request_history h_rec
-                     JOIN drawing_users u_rec ON h_rec.performed_by = u_rec.id
-                     WHERE h_rec.request_id = r.id AND h_rec.event_type = 'received'
-                     LIMIT 1) AS received_info,
-                    (SELECT CONCAT(u_rej.admin_name, ' at ', DATE_FORMAT(h_rej.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s'))
-                     FROM drawing_request_history h_rej
-                     JOIN drawing_users u_rej ON h_rej.performed_by = u_rej.id
-                     WHERE h_rej.request_id = r.id AND h_rej.event_type = 'rejected'
-                     LIMIT 1) AS rejected_info,
-                    (SELECT remarks FROM drawing_request_history 
-                     WHERE request_id = r.id AND event_type = 'rejected' 
-                     LIMIT 1) AS remarks
-                FROM drawing_requests r
-                LEFT JOIN drawing_request_history h_iss ON r.id = h_iss.request_id AND h_iss.event_type = 'issued'
-                WHERE """
-                + status_condition
-                + """ AND r.requested_by = %s
-                ORDER BY r.id DESC
-                LIMIT 500;
-            """
-            )
-            rows = db.fetch_all(query, params)
-            return rows
+            req = urllib.request.Request(API_BASE_URL, data=data)
+            with urllib.request.urlopen(req, timeout=API_TIMEOUT) as response:
+                raw_response = response.read().decode('utf-8')
+                result = json.loads(raw_response)
+
+            if result.get('response') == 'true':
+                return result.get('data', [])
+            else:
+                print("API Error: {}".format(result.get('message', 'Unknown error')))
+                return []
+
+        except urllib.error.URLError as e:
+            print("Network error fetching issued drawings: {}".format(e))
+            return []
+        except json.JSONDecodeError as e:
+            print("JSON parse error: {}".format(e))
+            print("Raw response: {}".format(raw_response if 'raw_response' in locals() else 'N/A'))
+            return []
         except Exception as e:
             print("Error fetching issued drawings: {}".format(e))
             return []
@@ -246,25 +221,7 @@ class DrawingReturnPage(ttk.Frame):
         request_id = record.get("id")
         drawing_no = record.get("no")
 
-        # ✅ Live DB check — catch if someone else already returned it
-        current = db.fetch_all(
-            "SELECT status FROM drawing_requests WHERE id = %s", (request_id,)
-        )
-        if not current:
-            messagebox.showerror("Error", "Drawing record not found.")
-            self.refresh(reset_pagination=False)
-            return
-
-        if current[0].get("status") != "Issued":
-            messagebox.showwarning(
-                "Already Returned",
-                "Drawing %s has already been returned by someone else.\n\nThe list will now refresh."
-                % drawing_no,
-            )
-            self.refresh(reset_pagination=False)
-            return
-
-        # Only ask confirmation if it's still genuinely "Issued"
+        # Confirm return
         if not messagebox.askyesno(
             "Confirm Return",
             "Are you sure you want to return Drawing %s (Rev: %s)?"
@@ -272,22 +229,35 @@ class DrawingReturnPage(ttk.Frame):
         ):
             return
 
-        query = "UPDATE drawing_requests SET status = 'Returned' WHERE id = %s"
-        if db.execute_query(query, (request_id,)):
-            insert_history = """
-                INSERT INTO drawing_request_history 
-                (request_id, event_type, performed_by, revision) 
-                VALUES (%s, 'returned', %s, (SELECT revision FROM drawing_requests WHERE id = %s))
-            """
-            db.execute_query(
-                insert_history, (request_id, self.user_id or 1, request_id)
-            )
-            messagebox.showinfo(
-                "Success", "Drawing %s has been returned successfully." % drawing_no
-            )
-            self.refresh(reset_pagination=False)
-        else:
-            messagebox.showerror("Error", "Failed to update return status in database.")
+        try:
+            # Prepare API request
+            data = urllib.parse.urlencode({
+                'action': 'return_drawing_request',
+                'request_id': request_id,
+                'user_id': self.user_id
+            }).encode('utf-8')
+
+            req = urllib.request.Request(API_BASE_URL, data=data)
+            with urllib.request.urlopen(req, timeout=API_TIMEOUT) as response:
+                raw_response = response.read().decode('utf-8')
+                result = json.loads(raw_response)
+
+            if result.get('response') == 'true':
+                messagebox.showinfo(
+                    "Success", "Drawing %s has been returned successfully." % drawing_no
+                )
+                self.refresh(reset_pagination=False)
+            else:
+                messagebox.showerror("Error", result.get('message', 'Failed to return drawing.'))
+
+        except urllib.error.URLError as e:
+            messagebox.showerror("Network Error", "Failed to connect to server: {}".format(e))
+        except json.JSONDecodeError as e:
+            messagebox.showerror("Error", "Invalid response from server.")
+            print("JSON parse error: {}".format(e))
+            print("Raw response: {}".format(raw_response if 'raw_response' in locals() else 'N/A'))
+        except Exception as e:
+            messagebox.showerror("Error", "An unexpected error occurred: {}".format(e))
 
     def refresh(self, reset_pagination=True, silent=False, button_silent=False):
         self.table.refresh(

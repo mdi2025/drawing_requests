@@ -5,7 +5,10 @@ from tkinter import ttk
 from tkinter import messagebox
 import styles
 from pages.table_component import CanvasDataTable
-from db_handler import db
+import urllib.request
+import urllib.parse
+import json
+from config import app_url as API_BASE_URL, api_timeout as API_TIMEOUT
 
 
 class DrawingReceivePage(ttk.Frame):
@@ -92,30 +95,30 @@ class DrawingReceivePage(ttk.Frame):
             status_filter = getattr(self, "status_var", None)
             selected_status = status_filter.get() if status_filter else "All"
 
-            query = """
-                SELECT 
-                    r.id,
-                    r.drawing_id AS no,
-                    r.revision AS rev,
-                    r.bag_name,
-                    r.ipd_catalog,
-                    r.status,
-                    u.admin_name AS returned_by,
-                    DATE_FORMAT(r.requested_at, '%%d-%%m-%%Y %%H:%%i:%%s') AS return_date,
-                    (SELECT CONCAT(u_rec.admin_name, ' at ', DATE_FORMAT(h_rec.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s'))
-                     FROM drawing_request_history h_rec
-                     JOIN drawing_users u_rec ON h_rec.performed_by = u_rec.id
-                     WHERE h_rec.request_id = r.id AND h_rec.event_type = 'received'
-                     LIMIT 1) AS received_info
-                FROM drawing_requests r
-                JOIN drawing_users u ON r.requested_by = u.id
-                WHERE r.status IN ('Returned', 'Received')
-                AND (r.status = %s OR %s = 'All')
-                ORDER BY r.requested_at DESC
-                LIMIT 500;
-            """
-            rows = db.fetch_all(query, (selected_status, selected_status))
-            return rows
+            # Prepare API request
+            data = urllib.parse.urlencode({
+                'action': 'get_returned_drawings',
+                'status_filter': selected_status
+            }).encode('utf-8')
+
+            req = urllib.request.Request(API_BASE_URL, data=data)
+            with urllib.request.urlopen(req, timeout=API_TIMEOUT) as response:
+                raw_response = response.read().decode('utf-8')
+                result = json.loads(raw_response)
+
+            if result.get('response') == 'true':
+                return result.get('data', [])
+            else:
+                print("API Error: {}".format(result.get('message', 'Unknown error')))
+                return []
+
+        except urllib.error.URLError as e:
+            print("Network error fetching returned drawings: {}".format(e))
+            return []
+        except json.JSONDecodeError as e:
+            print("JSON parse error: {}".format(e))
+            print("Raw response: {}".format(raw_response if 'raw_response' in locals() else 'N/A'))
+            return []
         except Exception as e:
             print("Error fetching returned drawings: {}".format(e))
             return []
@@ -137,24 +140,7 @@ class DrawingReceivePage(ttk.Frame):
         request_id = record.get("id")
         drawing_no = record.get("no")
 
-        # ✅ Live DB check — catch if someone else already received it
-        current = db.fetch_all(
-            "SELECT status FROM drawing_requests WHERE id = %s", (request_id,)
-        )
-        if not current:
-            messagebox.showerror("Error", "Drawing record not found.")
-            self.refresh(reset_pagination=False)
-            return
-
-        if current[0].get("status") != "Returned":
-            messagebox.showwarning(
-                "Already Received",
-                "Drawing %s has already been received by someone else.\n\nThe list will now refresh."
-                % drawing_no,
-            )
-            self.refresh(reset_pagination=False)
-            return
-
+        # Confirm receive
         if not messagebox.askyesno(
             "Confirm Receive",
             "Are you sure you want to receive Drawing %s (Rev: %s)?"
@@ -162,23 +148,35 @@ class DrawingReceivePage(ttk.Frame):
         ):
             return
 
-        # Log to history BEFORE updating the request
-        insert_history = """
-            INSERT INTO drawing_request_history 
-            (request_id, event_type, performed_by, revision) 
-            VALUES (%s, 'received', %s, (SELECT revision FROM drawing_requests WHERE id = %s))
-        """
-        db.execute_query(insert_history, (request_id, self.user_id or 1, request_id))
+        try:
+            # Prepare API request
+            data = urllib.parse.urlencode({
+                'action': 'receive_drawing_request',
+                'request_id': request_id,
+                'user_id': self.user_id
+            }).encode('utf-8')
 
-        # Complete the lifecycle by updating the status
-        query = "UPDATE drawing_requests SET status = 'Received' WHERE id = %s"
-        if db.execute_query(query, (request_id,)):
-            messagebox.showinfo(
-                "Success", "Drawing %s has been received successfully." % drawing_no
-            )
-            self.refresh(reset_pagination=False)
-        else:
-            messagebox.showerror("Error", "Failed to receive drawing from database.")
+            req = urllib.request.Request(API_BASE_URL, data=data)
+            with urllib.request.urlopen(req, timeout=API_TIMEOUT) as response:
+                raw_response = response.read().decode('utf-8')
+                result = json.loads(raw_response)
+
+            if result.get('response') == 'true':
+                messagebox.showinfo(
+                    "Success", "Drawing %s has been received successfully." % drawing_no
+                )
+                self.refresh(reset_pagination=False)
+            else:
+                messagebox.showerror("Error", result.get('message', 'Failed to receive drawing.'))
+
+        except urllib.error.URLError as e:
+            messagebox.showerror("Network Error", "Failed to connect to server: {}".format(e))
+        except json.JSONDecodeError as e:
+            messagebox.showerror("Error", "Invalid response from server.")
+            print("JSON parse error: {}".format(e))
+            print("Raw response: {}".format(raw_response if 'raw_response' in locals() else 'N/A'))
+        except Exception as e:
+            messagebox.showerror("Error", "An unexpected error occurred: {}".format(e))
 
     def refresh(self, reset_pagination=True, silent=False, button_silent=False):
         self.table.refresh(

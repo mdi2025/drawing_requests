@@ -9,10 +9,13 @@ import stat
 import zipfile
 import xml.etree.ElementTree as ET
 import xml.sax.saxutils as saxutils
+import urllib.request
+import urllib.parse
+import json
 
 import styles
 from pages.table_component import CanvasDataTable
-from db_handler import db
+from config import app_url as API_BASE_URL, api_timeout as API_TIMEOUT
 
 
 class ReportsPage(ttk.Frame):
@@ -416,146 +419,37 @@ class ReportsPage(ttk.Frame):
             f = self.from_date_var.get()
             t = self.to_date_var.get()
 
-            filters = []
-            if f and t:
-                filters.append("DATE(h_req.performed_at) BETWEEN '%s' AND '%s'" % (f, t))
-
             status_filter = getattr(self, "status_var", None)
             selected_status = status_filter.get() if status_filter else "All"
-            if selected_status == "All":
-                filters.append("r.status IN ('Pending', 'open', 'Issued', 'Rejected', 'Returned', 'Received')")
-            elif selected_status == "Pending":
-                filters.append("r.status IN ('Pending', 'open')")
+
+            # Prepare API request
+            data = urllib.parse.urlencode({
+                'action': 'get_report_data',
+                'from_date': f,
+                'to_date': t,
+                'status_filter': selected_status
+            }).encode('utf-8')
+
+            req = urllib.request.Request(API_BASE_URL, data=data)
+            with urllib.request.urlopen(req, timeout=API_TIMEOUT) as response:
+                raw_response = response.read().decode('utf-8')
+                result = json.loads(raw_response)
+
+            if result.get('response') == 'true':
+                return result.get('data', [])
             else:
-                filters.append("r.status = '%s'" % selected_status)
+                print("API Error: {}".format(result.get('message', 'Unknown error')))
+                return []
 
-            where_clause = "WHERE " + " AND ".join(filters) if filters else ""
-
-            query = """
-                SELECT 
-                    r.id,
-                    r.drawing_id AS no,
-                    h_req.revision AS req_rev,
-                    h_iss.revision AS iss_rev,
-                    r.status,
-                    r.bag_name,
-                    r.ipd_catalog,
-                    h_req.performed_at AS req_time,
-                    u_req.admin_name AS req_name,
-                    h_iss.performed_at AS iss_time,
-                    u_iss.admin_name AS iss_name,
-                    h_ret.performed_at AS ret_time,
-                    u_ret.admin_name AS ret_name,
-                    h_rec.performed_at AS rec_time,
-                    u_rec.admin_name AS rec_name,
-                    h_rej.performed_at AS rej_time,
-                    u_rej.admin_name AS rej_name,
-                    h_rej.remarks AS rej_remarks
-                FROM drawing_requests r
-                /* REQUESTED (only latest) */
-                LEFT JOIN drawing_request_history h_req 
-                    ON h_req.id = (
-                        SELECT MAX(id) 
-                        FROM drawing_request_history 
-                        WHERE request_id = r.id 
-                        AND event_type = 'requested'
-                    )
-                LEFT JOIN drawing_users u_req 
-                    ON h_req.performed_by = u_req.id
-
-                /* ISSUED (only latest) */
-                LEFT JOIN drawing_request_history h_iss 
-                    ON h_iss.id = (
-                        SELECT MAX(id) 
-                        FROM drawing_request_history 
-                        WHERE request_id = r.id 
-                        AND event_type = 'issued'
-                    )
-                LEFT JOIN drawing_users u_iss 
-                    ON h_iss.performed_by = u_iss.id
-
-                /* RETURNED (only latest) */
-                LEFT JOIN drawing_request_history h_ret 
-                    ON h_ret.id = (
-                        SELECT MAX(id) 
-                        FROM drawing_request_history 
-                        WHERE request_id = r.id 
-                        AND event_type = 'returned'
-                    )
-                LEFT JOIN drawing_users u_ret 
-                    ON h_ret.performed_by = u_ret.id
-
-                /* RECEIVED (only latest) */
-                LEFT JOIN drawing_request_history h_rec 
-                    ON h_rec.id = (
-                        SELECT MAX(id) 
-                        FROM drawing_request_history 
-                        WHERE request_id = r.id 
-                        AND event_type = 'received'
-                    )
-                LEFT JOIN drawing_users u_rec 
-                    ON h_rec.performed_by = u_rec.id
-
-                /* REJECTED (only latest) */
-                LEFT JOIN drawing_request_history h_rej 
-                    ON h_rej.id = (
-                        SELECT MAX(id) 
-                        FROM drawing_request_history 
-                        WHERE request_id = r.id 
-                        AND event_type = 'rejected'
-                    )
-                LEFT JOIN drawing_users u_rej 
-                    ON h_rej.performed_by = u_rej.id
-             """
-
-            if where_clause:
-                query += " " + where_clause
-
-            query += " ORDER BY r.id DESC LIMIT 1000"
-
-            rows = db.fetch_all(query)
-
-            formatted_rows = []
-            for row in rows:
-
-                def format_time(name, time):
-                    if time:
-                        return "%s at %s" % (name, time.strftime("%d-%m-%Y %H:%M"))
-                    return "—"
-
-                formatted_rows.append(
-                    {
-                        "id": row["id"],
-                        "no": row["no"],
-                        "rev": row["iss_rev"] if row["iss_rev"] else row["req_rev"],
-                        "bag_name": row["bag_name"] or "",
-                        "ipd_catalog": row["ipd_catalog"] or "",
-                        "status": row["status"],
-                        "remarks": row["rej_remarks"] or "",
-                        "req_info": format_time(row["req_name"], row["req_time"]),
-                        "iss_info": format_time(row["iss_name"], row["iss_time"]),
-                        "ret_info": format_time(row["ret_name"], row["ret_time"]),
-                        "rec_info": format_time(row["rec_name"], row["rec_time"]),
-                        "rej_by": row["rej_name"] or "",
-                        "rej_at": (
-                            row["rej_time"].strftime("%d-%m-%Y %H:%M:%S")
-                            if row["rej_time"]
-                            else ""
-                        ),
-                        "rej_info": format_time(row["rej_name"], row["rej_time"]),
-                    }
-                )
-
-                if row["status"].upper() == "REJECTED" and row["rej_time"]:
-                    formatted_rows[-1]["iss_info"] = "REJECTED - %s at %s" % (
-                        row["rej_name"] or "Unknown",
-                        row["rej_time"].strftime("%d-%m-%Y %H:%M"),
-                    )
-
-            return formatted_rows
-
+        except urllib.error.URLError as e:
+            print("Network error fetching report data: {}".format(e))
+            return []
+        except json.JSONDecodeError as e:
+            print("JSON parse error: {}".format(e))
+            print("Raw response: {}".format(raw_response if 'raw_response' in locals() else 'N/A'))
+            return []
         except Exception as e:
-            print("Error:", str(e))
+            print("Error fetching report data: {}".format(e))
             return []
 
     # ================= FORMATTERS =================

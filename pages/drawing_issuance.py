@@ -3,9 +3,17 @@
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
+import json
+import urllib.parse
+
+try:
+    import urllib.request as urllib_request
+except ImportError:
+    import urllib as urllib_request
 import styles
 from pages.table_component import CanvasDataTable
 from db_handler import db
+from config import app_url as API_BASE_URL, api_timeout as API_TIMEOUT
 
 
 class DrawingIssuancePage(ttk.Frame):
@@ -13,6 +21,7 @@ class DrawingIssuancePage(ttk.Frame):
         ttk.Frame.__init__(self, parent)
         self.username = username
         self.user_id = user_id
+
 
         self.table = CanvasDataTable(
             self,
@@ -62,23 +71,27 @@ class DrawingIssuancePage(ttk.Frame):
             "status",
             "remarks",
         ]
-        
+
         # Add Status Filter Dropdown
         filter_frame = tk.Frame(self.table.header_frame, bg=styles.LIGHT)
         filter_frame.pack(side="left", padx=(20, 0))
-        
+
         tk.Label(
-            filter_frame, text="Filter:", bg=styles.LIGHT, fg=styles.SECONDARY, font=("Segoe UI", 10)
+            filter_frame,
+            text="Filter:",
+            bg=styles.LIGHT,
+            fg=styles.SECONDARY,
+            font=("Segoe UI", 10),
         ).pack(side="left", padx=(0, 5))
-        
+
         self.status_var = tk.StringVar(value="All")
         self.status_cb = ttk.Combobox(
-            filter_frame, 
+            filter_frame,
             textvariable=self.status_var,
             values=["All", "Pending", "Issued", "Rejected", "Received", "Returned"],
             state="readonly",
             width=12,
-            font=("Segoe UI", 10)
+            font=("Segoe UI", 10),
         )
         self.status_cb.pack(side="left")
         self.status_cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
@@ -104,64 +117,31 @@ class DrawingIssuancePage(ttk.Frame):
             status_filter = getattr(self, "status_var", None)
             selected_status = status_filter.get() if status_filter else "All"
 
-            query = """
-              SELECT 
-    r.id,
-    r.drawing_id AS no,
-    r.revision AS rev,
-    r.status,
-    r.bag_name,
-    r.ipd_catalog,
+            # Call API to get requested drawings
+            data = {
+                "action": "get_requested_drawings",
+                "status_filter": selected_status,
+            }
+            encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+            req = urllib_request.Request(API_BASE_URL, data=encoded_data, method="POST")
 
-    CONCAT(u_req.admin_name, ' at ', DATE_FORMAT(h_req.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s')) AS requested_by,
-    CONCAT(u_iss.admin_name, ' at ', DATE_FORMAT(h_iss.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s')) AS issued_info,
-    CONCAT(u_rej.admin_name, ' at ', DATE_FORMAT(h_rej.performed_at, '%%d-%%m-%%Y %%H:%%i:%%s')) AS rejected_info,
-    h_rej.remarks
+            response = urllib_request.urlopen(req, timeout=API_TIMEOUT)
+            raw = response.read().decode("utf-8")
+            result = json.loads(raw)
 
-FROM drawing_requests r
+            if result.get("response") == "true":
+                return result.get("data", [])
+            else:
+                print("API error: {}".format(result.get("message", "Unknown")))
+                return []
 
-/* REQUESTED (only latest) */
-JOIN drawing_request_history h_req 
-    ON h_req.id = (
-        SELECT MAX(id) 
-        FROM drawing_request_history 
-        WHERE request_id = r.id 
-        AND event_type = 'requested'
-    )
-JOIN drawing_users u_req ON h_req.performed_by = u_req.id
-
-/* ISSUED (only latest) */
-LEFT JOIN drawing_request_history h_iss 
-    ON h_iss.id = (
-        SELECT MAX(id) 
-        FROM drawing_request_history 
-        WHERE request_id = r.id 
-        AND event_type = 'issued'
-    )
-LEFT JOIN drawing_users u_iss ON h_iss.performed_by = u_iss.id
-
-/* REJECTED (only latest) */
-LEFT JOIN drawing_request_history h_rej 
-    ON h_rej.id = (
-        SELECT MAX(id) 
-        FROM drawing_request_history 
-        WHERE request_id = r.id 
-        AND event_type = 'rejected'
-    )
-LEFT JOIN drawing_users u_rej ON h_rej.performed_by = u_rej.id
-
-
-WHERE r.status IN ('Pending', 'open', 'Issued', 'Rejected', 'Returned', 'Received')
-AND (r.status = %s OR %s = 'All' OR (%s = 'Pending' AND r.status = 'open'))
-
-ORDER BY r.id DESC
-LIMIT 500;
-            """
-            params = (selected_status, selected_status, selected_status)
-            rows = db.fetch_all(query, params)
-            return rows if rows else []
+        except ValueError as e:
+            print("Raw API response:", repr(raw))
+            messagebox.showerror("Error", "API returned invalid JSON: {}".format(e))
+            return []
         except Exception as e:
-            print("Error fetching requests: {}".format(e))
+            print("API call failed: {}".format(e))
+            messagebox.showerror("Error", "Failed to fetch requests from server.")
             return []
 
     def _format_remarks(self, val, record):
@@ -266,7 +246,7 @@ LIMIT 500;
                 FROM master_data_new 
                 WHERE catalog = %s 
                   AND approved_status = 'approved'
-                ORDER BY auto_id DESC 
+                ORDER BY revision DESC
                 LIMIT 1
             """
             latest_data = db.fetch_all(latest_query, (drawing_no,))
@@ -276,7 +256,9 @@ LIMIT 500;
             if not latest_rev or str(requested_rev) == str(latest_rev):
                 if messagebox.askyesno(
                     "Confirm Issue",
-                    "Are you sure you want to issue drawing {} (Rev: {})?".format(drawing_no, requested_rev),
+                    "Are you sure you want to issue drawing {} (Rev: {})?".format(
+                        drawing_no, requested_rev
+                    ),
                 ):
                     self._finish_issuance(record, requested_rev)
                 return
@@ -289,7 +271,9 @@ LIMIT 500;
             # Fallback: Issue the originally requested revision
             if messagebox.askyesno(
                 "Confirm Issue",
-                "Are you sure you want to issue drawing {} (Rev: {})?".format(drawing_no, requested_rev),
+                "Are you sure you want to issue drawing {} (Rev: {})?".format(
+                    drawing_no, requested_rev
+                ),
             ):
                 self._finish_issuance(record, requested_rev)
 
@@ -423,73 +407,46 @@ LIMIT 500;
         drawing_no = record.get("no")
         current_rev = record.get("rev")
 
-        # Check if another request for the same catalog and revision is already issued or returned (not received)
-        check_query = """
-            SELECT COUNT(*) as count 
-            FROM drawing_requests 
-            WHERE drawing_id = %s AND revision = %s AND status IN ('Issued', 'Returned')
-        """
-        result = db.fetch_all(check_query, (drawing_no, target_rev))
-        if result and result[0]['count'] > 0:
-            messagebox.showerror(
-                "Cannot Issue",
-                "Another request for drawing {} Rev {} is currently issued or returned and not received yet.".format(drawing_no, target_rev)
-            )
-            return
+        # Call API to issue the drawing
+        data = {
+            "action": "issue_drawing_request",
+            "request_id": request_id,
+            "user_id": self.user_id or 1,
+            "target_revision": target_rev if target_rev != current_rev else "",
+        }
+        encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+        req = urllib_request.Request(API_BASE_URL, data=encoded_data, method="POST")
 
-        # Guard: re-check current status from DB to prevent double-issuance
         try:
-            status_check = db.fetch_all(
-                "SELECT status FROM drawing_requests WHERE id = %s", (request_id,)
-            )
-            if status_check:
-                live_status = status_check[0].get("status", "")
-                if live_status not in ("Pending", "open"):
-                    messagebox.showerror(
-                        "Already Issued",
-                        "Drawing {} has already been {}.\nIt cannot be issued again.".format(
-                            drawing_no, live_status.lower()
-                        ),
-                    )
-                    self.refresh(reset_pagination=False)
-                    return
+            response = urllib_request.urlopen(req, timeout=API_TIMEOUT)
+            raw = response.read().decode("utf-8")
+            result = json.loads(raw)
+
+            if result.get("response") == "true":
+                # Success - update UI immediately
+                for row in self.table.data:
+                    if row.get("id") == request_id:
+                        row["status"] = "Issued"
+                        row["rev"] = target_rev
+                        break
+                self.table._apply_search(reset_pagination=False)
+
+                msg = "Drawing {} (Rev {}) has been issued successfully.".format(
+                    drawing_no, target_rev
+                )
+                messagebox.showinfo("Issuance", msg)
+                self.refresh(reset_pagination=False, button_silent=True)
+            else:
+                messagebox.showerror(
+                    "Error", result.get("message", "Failed to issue drawing.")
+                )
+
+        except ValueError as e:
+            print("Raw API response:", repr(raw))
+            messagebox.showerror("Error", "API returned invalid JSON: {}".format(e))
         except Exception as e:
-            print("Status check failed: {}".format(e))
-
-        # Update revision if different
-        if target_rev and str(target_rev) != str(current_rev):
-            db.execute_query(
-                "UPDATE drawing_requests SET revision = %s WHERE id = %s",
-                (target_rev, request_id),
-            )
-
-        query = "UPDATE drawing_requests SET status = 'Issued' WHERE id = %s"
-        if db.execute_query(query, (request_id,)):
-            # Log history
-            insert_history = """
-                INSERT INTO drawing_request_history 
-                (request_id, event_type, performed_by, revision) 
-                VALUES (%s, 'issued', %s, %s)
-            """
-            db.execute_query(
-                insert_history, (request_id, self.user_id or 1, target_rev)
-            )
-
-            # Immediately update in-memory record to disable button (optimistic update)
-            for row in self.table.data:
-                if row.get("id") == request_id:
-                    row["status"] = "Issued"
-                    row["rev"] = target_rev
-                    break
-            self.table._apply_search(reset_pagination=False)
-
-            msg = "Drawing {} (Rev {}) has been issued successfully.".format(
-                drawing_no, target_rev
-            )
-            messagebox.showinfo("Issuance", msg)
-            self.refresh(reset_pagination=False, button_silent=True)
-        else:
-            messagebox.showerror("Error", "Failed to update status in database.")
+            print("API call failed: {}".format(e))
+            messagebox.showerror("Error", "Failed to connect to server.")
 
     # ====================== NEW: Rejection Remarks Modal (Red Theme) ======================
     def _handle_reject(self, record):
@@ -632,23 +589,37 @@ LIMIT 500;
         request_id = record.get("id")
         drawing_no = record.get("no")
 
-        query = "UPDATE drawing_requests SET status = 'Rejected' WHERE id = %s"
-        if db.execute_query(query, (request_id,)):
-            insert_history = """
-                INSERT INTO drawing_request_history 
-                (request_id, event_type, performed_by, revision, remarks) 
-                VALUES (%s, 'rejected', %s, (SELECT revision FROM drawing_requests WHERE id = %s), %s)
-            """
-            db.execute_query(
-                insert_history, (request_id, self.user_id or 1, request_id, remarks)
-            )
+        # Call API to reject the drawing
+        data = {
+            "action": "reject_drawing_request",
+            "request_id": request_id,
+            "user_id": self.user_id or 1,
+            "remarks": remarks,
+        }
+        encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+        req = urllib_request.Request(API_BASE_URL, data=encoded_data, method="POST")
 
-            messagebox.showinfo(
-                "Rejected", "Request for {} has been rejected.".format(drawing_no)
-            )
-            self.refresh(reset_pagination=False)
-        else:
-            messagebox.showerror("Error", "Failed to update status in database.")
+        try:
+            response = urllib_request.urlopen(req, timeout=API_TIMEOUT)
+            raw = response.read().decode("utf-8")
+            result = json.loads(raw)
+
+            if result.get("response") == "true":
+                messagebox.showinfo(
+                    "Rejected", "Request for {} has been rejected.".format(drawing_no)
+                )
+                self.refresh(reset_pagination=False)
+            else:
+                messagebox.showerror(
+                    "Error", result.get("message", "Failed to reject request.")
+                )
+
+        except ValueError as e:
+            print("Raw API response:", repr(raw))
+            messagebox.showerror("Error", "API returned invalid JSON: {}".format(e))
+        except Exception as e:
+            print("API call failed: {}".format(e))
+            messagebox.showerror("Error", "Failed to connect to server.")
 
     def refresh(self, reset_pagination=True, silent=False, button_silent=False):
         self.table.refresh(

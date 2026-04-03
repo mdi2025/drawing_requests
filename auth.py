@@ -1,23 +1,36 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import hashlib
-from db_handler import db
+import json
+
+try:
+    # Python 3
+    import urllib.request as urllib_request
+    import urllib.parse as urllib_parse
+except ImportError:
+    # Python 2 fallback
+    import urllib as urllib_request
+    import urllib as urllib_parse
+
+from config import app_url as API_BASE_URL, api_timeout as API_TIMEOUT
 
 
 def authenticate(username, password):
     """
-    Authenticate user against drawing_users table.
-    Password is compared using MD5 hash.
+    Authenticate user via the Drawing Management System API.
+
+    Sends a POST request to the API with action=login.
+    The API handles MD5 hashing server-side.
 
     Args:
         username: The admin_name from drawing_users table
         password: The plain text password to verify
 
     Returns:
-        tuple: (success: bool, permissions: list)
-            - success: True if authentication successful, False otherwise
-            - permissions: List of page IDs user has access to (empty if auth failed)
+        tuple: (success: bool, permissions: list, user_id: int|None)
+            - success:     True if authentication successful
+            - permissions: List of page IDs user has access to
+            - user_id:     The user's DB id (or None on failure)
 
     Page Permission IDs:
         1 = Drawing Requests
@@ -27,38 +40,41 @@ def authenticate(username, password):
         5 = User Management
     """
     try:
-        # Hash the provided password with MD5
-        password_md5 = hashlib.md5(password.encode("utf-8")).hexdigest()
+        # Build POST payload
+        post_data = urllib_parse.urlencode(
+            {
+                "action": "login",
+                "username": username,
+                "password": password,
+            }
+        ).encode("utf-8")
 
-        # Query the drawing_users table (include access_tokens)
-        query = """
-            SELECT id, admin_name, access_tokens 
-            FROM drawing_users 
-            WHERE admin_name = %s AND admin_pass = %s AND is_deleted = 0
-        """
-        result = db.fetch_all(query, (username, password_md5))
+        # Make the HTTP POST request
+        req = urllib_request.Request(API_BASE_URL, data=post_data)
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        response = urllib_request.urlopen(req, timeout=API_TIMEOUT)
+        raw = response.read().decode("utf-8")
 
-        # If we get a result, authentication is successful
-        if result and len(result) > 0:
-            user = result[0]
-            # Parse access_tokens (JSON field)
-            import json
+        # Parse JSON response
+        result = json.loads(raw)
 
-            access_tokens = user.get("access_tokens", [])
+        if result.get("response") == "true":
+            data = result.get("data", {})
+            access_tokens = data.get("access_tokens", [])
+            user_id = data.get("id", None)
 
-            # Handle if access_tokens is a string (JSON string)
+            # Ensure access_tokens is a list
             if isinstance(access_tokens, str):
                 try:
                     access_tokens = json.loads(access_tokens)
-                except:
+                except Exception:
                     access_tokens = []
-
-            # Ensure it's a list
             if not isinstance(access_tokens, list):
                 access_tokens = []
 
-            return (True, access_tokens, user.get("id"))
-        return (False, [], None)
+            return (True, access_tokens, user_id)
+        else:
+            return (False, [], None)
 
     except Exception as e:
         print("Authentication error: {}".format(e))

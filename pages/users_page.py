@@ -7,12 +7,19 @@ import hashlib
 import json
 import threading
 import styles
+import urllib.request
+import urllib.parse
 from pages.table_component import CanvasDataTable
+from config import app_url as API_BASE_URL, api_timeout as API_TIMEOUT
 
 
 class UsersPage(ttk.Frame):
+    # API Configuration
     def __init__(self, parent, on_data_ready=None):
         ttk.Frame.__init__(self, parent)
+
+        self.API_BASE_URL = API_BASE_URL
+        self.API_TIMEOUT = API_TIMEOUT
 
         self.table = CanvasDataTable(
             self,
@@ -97,39 +104,16 @@ class UsersPage(ttk.Frame):
 
     def _fetch_users(self):
         try:
-            import sys, os
+            # Make API call to get users
+            url = "{}?action=get_users".format(self.API_BASE_URL)
+            with urllib.request.urlopen(url) as response:
+                data = json.loads(response.read().decode("utf-8"))
 
-            sys.path.append(
-                os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-            )
-            from db_handler import db
-
-            query = (
-                "SELECT id, admin_name, department, access_tokens, user_role "
-                "FROM drawing_users WHERE is_deleted=0 ORDER BY id"
-            )
-            data = db.fetch_all(query) or []
-
-            for user in data:
-                # Parse access_tokens
-                tokens = user.get("access_tokens", [])
-                if isinstance(tokens, (str, bytes)):
-                    try:
-                        tokens = json.loads(tokens)
-                    except Exception:
-                        tokens = []
-                user["access_tokens"] = tokens
-
-                # Parse user_role
-                roles = user.get("user_role", [])
-                if isinstance(roles, (str, bytes)):
-                    try:
-                        roles = json.loads(roles) 
-                    except Exception:
-                        roles = []
-                user["user_role"] = roles if isinstance(roles, list) else []
-
-            return data
+            if data.get("response") == "true":
+                return data.get("data", [])
+            else:
+                print("API Error: {}".format(data.get("message", "Unknown error")))
+                return []
         except Exception as e:
             print("Error fetching users: {}".format(e))
             return []
@@ -191,14 +175,15 @@ class UsersPage(ttk.Frame):
         dept_var = tk.StringVar(value=user.get("department", "") if user else "")
 
         try:
-            from db_handler import db
+            # Fetch departments from API
+            dept_url = "{}?action=get_departments".format(self.API_BASE_URL)
+            with urllib.request.urlopen(dept_url) as response:
+                dept_data = json.loads(response.read().decode("utf-8"))
 
-            dept_rows = db.fetch_all(
-                "SELECT description_short FROM departments ORDER BY description_short"
-            )
-            dept_list = [
-                r["description_short"] for r in dept_rows if r["description_short"]
-            ]
+            if dept_data.get("response") == "true":
+                dept_list = dept_data.get("data", [])
+            else:
+                dept_list = []
         except Exception:
             dept_list = []
 
@@ -410,8 +395,6 @@ class UsersPage(ttk.Frame):
     def _save_user_role(self, uid, roles, dlg):
         """Persist user_role and auto-update access_tokens based on selected roles."""
         try:
-            from db_handler import db
-
             if not roles:
                 messagebox.showerror(
                     "Error",
@@ -426,10 +409,22 @@ class UsersPage(ttk.Frame):
                 merged_tokens.update(self.ROLE_PERMISSIONS.get(role, []))
             merged_tokens = sorted(merged_tokens)
 
-            if db.execute_query(
-                "UPDATE drawing_users SET user_role=%s, access_tokens=%s WHERE id=%s",
-                (json.dumps(roles), json.dumps(merged_tokens), uid),
-            ):
+            # Make API call to assign user role
+            data = {
+                "action": "assign_user_role",
+                "user_id": uid,
+                "user_role": json.dumps(roles),
+            }
+
+            encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+            req = urllib.request.Request(
+                self.API_BASE_URL, data=encoded_data, method="POST"
+            )
+
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode("utf-8"))
+
+            if result.get("response") == "true":
                 messagebox.showinfo(
                     "Success",
                     "Role updated successfully.\nPermissions set to: {}".format(
@@ -440,7 +435,9 @@ class UsersPage(ttk.Frame):
                 dlg.destroy()
                 self.refresh(reset_pagination=False)
             else:
-                messagebox.showerror("Error", "Failed to update role", parent=dlg)
+                messagebox.showerror(
+                    "Error", result.get("message", "Failed to update role"), parent=dlg
+                )
         except Exception as e:
             messagebox.showerror("Error", str(e), parent=dlg)
 
@@ -448,50 +445,64 @@ class UsersPage(ttk.Frame):
 
     def _create_user_db(self, username, password, department, perms, dlg):
         try:
-            from db_handler import db
+            # Make API call to create user
+            data = {
+                "action": "create_user",
+                "username": username,
+                "password": password,
+                "department": department,
+                "access_tokens": json.dumps(perms),
+            }
 
-            if db.fetch_all(
-                "SELECT id FROM drawing_users WHERE admin_name=%s", (username,)
-            ):
-                messagebox.showerror("Error", "Username exists", parent=dlg)
-                return
-            pwd_hash = hashlib.md5(password.encode("utf-8")).hexdigest()
-            if db.execute_query(
-                "INSERT INTO drawing_users (admin_name, admin_pass, department, access_tokens, user_role) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (username, pwd_hash, department, json.dumps(perms), json.dumps([])),
-            ):
+            encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+            req = urllib.request.Request(
+                self.API_BASE_URL, data=encoded_data, method="POST"
+            )
+
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode("utf-8"))
+
+            if result.get("response") == "true":
                 messagebox.showinfo("Success", "User created", parent=dlg)
                 dlg.destroy()
                 self.refresh(reset_pagination=False)
             else:
-                messagebox.showerror("Error", "Failed", parent=dlg)
+                messagebox.showerror(
+                    "Error", result.get("message", "Failed"), parent=dlg
+                )
         except Exception as e:
             messagebox.showerror("Error", str(e), parent=dlg)
 
     def _update_user_db(self, uid, username, password, department, perms, dlg):
         try:
-            from db_handler import db
+            # Make API call to update user
+            data = {
+                "action": "update_user",
+                "user_id": uid,
+                "username": username,
+                "department": department,
+                "access_tokens": json.dumps(perms),
+            }
 
             if password:
-                pwd_hash = hashlib.md5(password.encode("utf-8")).hexdigest()
-                q = (
-                    "UPDATE drawing_users SET admin_name=%s, admin_pass=%s, "
-                    "department=%s, access_tokens=%s WHERE id=%s"
-                )
-                p = (username, pwd_hash, department, json.dumps(perms), uid)
-            else:
-                q = (
-                    "UPDATE drawing_users SET admin_name=%s, department=%s, "
-                    "access_tokens=%s WHERE id=%s"
-                )
-                p = (username, department, json.dumps(perms), uid)
-            if db.execute_query(q, p):
+                data["password"] = password
+
+            encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+            req = urllib.request.Request(
+                self.API_BASE_URL, data=encoded_data, method="POST"
+            )
+
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode("utf-8"))
+
+            if result.get("response") == "true":
                 messagebox.showinfo("Success", "User updated", parent=dlg)
                 dlg.destroy()
                 self.refresh(reset_pagination=False)
             else:
-                messagebox.showerror("Error", "Failed", parent=dlg)
+                messagebox.showerror(
+                    "Error", result.get("message", "Failed"), parent=dlg
+                )
         except Exception as e:
             messagebox.showerror("Error", str(e), parent=dlg)
 
@@ -499,15 +510,24 @@ class UsersPage(ttk.Frame):
         if not messagebox.askyesno("Confirm", "Delete user '%s'?" % user["admin_name"]):
             return
         try:
-            from db_handler import db
+            # Make API call to delete user
+            data = {"action": "delete_user", "user_id": user["id"]}
 
-            if db.execute_query(
-                "UPDATE drawing_users SET is_deleted=1 WHERE id=%s", (user["id"],)
-            ):
+            encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+            req = urllib.request.Request(
+                self.API_BASE_URL, data=encoded_data, method="POST"
+            )
+
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode("utf-8"))
+
+            if result.get("response") == "true":
                 messagebox.showinfo("Success", "User Deleted")
                 self.refresh(reset_pagination=False)
             else:
-                messagebox.showerror("Error", "Failed to delete user")
+                messagebox.showerror(
+                    "Error", result.get("message", "Failed to delete user")
+                )
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
