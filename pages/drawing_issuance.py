@@ -240,42 +240,35 @@ class DrawingIssuancePage(ttk.Frame):
         requested_rev = record.get("rev")
 
         try:
-            # Check latest approved revision from backend
-            latest_query = """
-                SELECT revision 
-                FROM master_data_new 
-                WHERE catalog = %s 
-                  AND approved_status = 'approved'
-                ORDER BY revision DESC
-                LIMIT 1
-            """
-            latest_data = db.fetch_all(latest_query, (drawing_no,))
-            latest_rev = latest_data[0]["revision"] if latest_data else None
+            data = {
+                "action": "check_latest_revision",
+                "drawing_no": drawing_no,
+                "requested_rev": requested_rev,
+            }
+            encoded_data = urllib.parse.urlencode(data).encode("utf-8")
+            req = urllib_request.Request(API_BASE_URL, data=encoded_data, method="POST")
+            response = urllib_request.urlopen(req, timeout=API_TIMEOUT)
+            result = json.loads(response.read().decode("utf-8"))
 
-            # Case 1: No newer revision or same as requested
-            if not latest_rev or str(requested_rev) == str(latest_rev):
-                if messagebox.askyesno(
-                    "Confirm Issue",
-                    "Are you sure you want to issue drawing {} (Rev: {})?".format(
-                        drawing_no, requested_rev
-                    ),
-                ):
-                    self._finish_issuance(record, requested_rev)
+            if result.get("response") != "true":
+                messagebox.showerror("Error", result.get("message", "Failed to check revision."))
                 return
 
-            # Case 2: Newer revision available → Show revision selection modal
-            self._show_revision_modal(record, requested_rev, latest_rev)
+            latest_rev = result.get("latest_rev")
+            has_newer = result.get("has_newer", False)
+
+            if not has_newer:
+                if messagebox.askyesno(
+                    "Confirm Issue",
+                    "Are you sure you want to issue drawing {} (Rev: {})?".format(drawing_no, requested_rev),
+                ):
+                    self._finish_issuance(record, requested_rev)
+            else:
+                self._show_revision_modal(record, requested_rev, latest_rev)
 
         except Exception as e:
-            print("Error checking latest revision: {}".format(e))
-            # Fallback: Issue the originally requested revision
-            if messagebox.askyesno(
-                "Confirm Issue",
-                "Are you sure you want to issue drawing {} (Rev: {})?".format(
-                    drawing_no, requested_rev
-                ),
-            ):
-                self._finish_issuance(record, requested_rev)
+            print("API call failed: {}".format(e))
+            messagebox.showerror("Error", "Failed to connect to server.")
 
     def _show_revision_modal(self, record, req_rev, lat_rev):
         dialog = tk.Toplevel(self)
